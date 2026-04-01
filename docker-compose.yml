@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  psh:
+    image: ${DOCKER_USERNAME:-yourusername}/psh:${DOCKER_TAG:-latest}
+    container_name: psh
+    restart: unless-stopped
+
+    # 多架构支持 - Docker 自动选择合适的架构
+    # platform: linux/amd64  # 或 linux/arm64
+
+    ports:
+      - "8443:8443"
+
+    volumes:
+      # SSH 配置和密钥（只读挂载）
+      - ~/.ssh:/root/.ssh:ro
+      # 审计日志持久化
+      - psh-logs:/var/log/psh
+      # 自定义 TLS 证书（可选）
+      # - ./certs/cert.pem:/etc/ssl/cert.pem:ro
+      # - ./certs/key.pem:/etc/ssl/key.pem:ro
+
+    environment:
+      # 必需：设置登录密码
+      - PSH_PASSWORD=${PSH_PASSWORD:?PSH_PASSWORD is required}
+
+      # 可选配置
+      - PSH_HOST=0.0.0.0
+      - PSH_PORT=8443
+      - PSH_JWT_SECRET=${PSH_JWT_SECRET:-}  # 留空则自动生成
+      - PSH_JWT_EXPIRE=86400  # 24小时
+      - PSH_SSH_CONFIG=/root/.ssh/config
+      - PSH_AUDIT_LOG=/var/log/psh/audit.jsonl
+      - PSH_AUTO_CERTS=true  # 自动生成自签名证书
+
+      # 自定义证书配置（可选）
+      # - PSH_TLS_CERT=/etc/ssl/cert.pem
+      # - PSH_TLS_KEY=/etc/ssl/key.pem
+      # - PSH_AUTO_CERTS=false
+
+      # 日志级别
+      - RUST_LOG=info
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8443/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+    # 安全配置
+    security_opt:
+      - no-new-privileges:true
+
+    # 资源限制（可选）
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+    # 日志配置
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# 持久化卷
+volumes:
+  psh-logs:
+    driver: local
+
+# 使用示例：
+# 1. 创建 .env 文件：echo "PSH_PASSWORD=your-secure-password" > .env
+# 2. 启动服务：docker-compose up -d
+# 3. 查看日志：docker-compose logs -f
+# 4. 停止服务：docker-compose down

@@ -84,20 +84,6 @@ impl AuditLogger {
         }).await
     }
 
-    pub async fn log_command(&self, session_id: &str, host: &str, command: &str) -> anyhow::Result<()> {
-        info!("Audit: Command - session={}, host={}, command={}", session_id, host, command);
-        
-        self.write_event(AuditEvent {
-            timestamp: Utc::now().to_rfc3339(),
-            event_type: "command".to_string(),
-            session_id: session_id.to_string(),
-            host: Some(host.to_string()),
-            user: None,
-            command: Some(command.to_string()),
-            error: None,
-        }).await
-    }
-
     pub async fn log_error(&self, session_id: &str, host: Option<&str>, error: &str) -> anyhow::Result<()> {
         error!("Audit: Error - session={}, host={:?}, error={}", session_id, host, error);
         

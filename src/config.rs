@@ -94,16 +94,14 @@ pub async fn load_tls_config(config: &Config) -> anyhow::Result<Option<axum_serv
 }
 
 fn generate_self_signed_cert() -> anyhow::Result<rcgen::CertifiedKey> {
-    use rcgen::{generate_simple_self_signed, CertifiedKey};
-    
+    use rcgen::generate_simple_self_signed;
+
     let subject_alt_names = vec![
         "localhost".to_string(),
         "psh".to_string(),
         "psh.local".to_string(),
     ];
-    
-    let CertifiedKey { cert, key_pair } = generate_simple_self_signed(subject_alt_names)
-        .map_err(|e| anyhow::anyhow!("Failed to generate self-signed certificate: {}", e))?;
-    
-    Ok(CertifiedKey { cert, key_pair })
+
+    generate_simple_self_signed(subject_alt_names)
+        .map_err(|e| anyhow::anyhow!("Failed to generate self-signed certificate: {}", e))
 }

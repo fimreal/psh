@@ -9,19 +9,92 @@
 - **安全访问** - 默认自签名 HTTPS，支持配置正式证书
 - **Web 登录** - JWT 鉴权，单用户场景
 - **审计日志** - JSONL 格式的连接和命令日志
+- **多架构支持** - 原生支持 Linux 和 macOS 的 AMD64/ARM64 架构
 
-## 快速开始
+## 安装
 
-### Docker 运行
+### 方式一：使用预编译二进制文件（推荐）
+
+从 [Releases](https://github.com/your-org/psh/releases) 页面下载适合你系统的版本：
+
+**Linux (AMD64/x86_64)**
+```bash
+# 下载
+wget https://github.com/your-org/psh/releases/latest/download/psh-linux-amd64.tar.gz
+# 解压
+tar -xzf psh-linux-amd64.tar.gz
+# 验证
+sha256sum -c psh-linux-amd64.sha256
+# 运行
+sudo mv psh /usr/local/bin/
+PSH_PASSWORD=your-password psh
+```
+
+**Linux (ARM64/aarch64)**
+```bash
+wget https://github.com/your-org/psh/releases/latest/download/psh-linux-arm64.tar.gz
+tar -xzf psh-linux-arm64.tar.gz
+sha256sum -c psh-linux-arm64.sha256
+sudo mv psh /usr/local/bin/
+PSH_PASSWORD=your-password psh
+```
+
+**macOS (Apple Silicon)**
+```bash
+wget https://github.com/your-org/psh/releases/latest/download/psh-darwin-arm64.tar.gz
+tar -xzf psh-darwin-arm64.tar.gz
+shasum -a 256 -c psh-darwin-arm64.sha256
+sudo mv psh /usr/local/bin/
+PSH_PASSWORD=your-password psh
+```
+
+**macOS (Intel)**
+```bash
+wget https://github.com/your-org/psh/releases/latest/download/psh-darwin-amd64.tar.gz
+tar -xzf psh-darwin-amd64.tar.gz
+shasum -a 256 -c psh-darwin-amd64.sha256
+sudo mv psh /usr/local/bin/
+PSH_PASSWORD=your-password psh
+```
+
+### 方式二：使用 Docker（支持多架构）
+
+Docker 镜像支持以下架构：
+- `linux/amd64` (x86_64)
+- `linux/arm64` (aarch64)
+
+Docker 会自动选择适合你系统的架构：
 
 ```bash
+# 将 yourusername 替换为你的 Docker Hub 用户名
 docker run -d \
   --name psh \
   --restart always \
   -p 8443:8443 \
   -v ~/.ssh:/root/.ssh:ro \
   -e PSH_PASSWORD=your-secure-password \
-  ghcr.io/epurs/psh:latest
+  yourusername/psh:latest
+```
+
+指定特定架构：
+```bash
+# AMD64
+docker run -d \
+  --platform linux/amd64 \
+  --name psh \
+  -p 8443:8443 \
+  -v ~/.ssh:/root/.ssh:ro \
+  -e PSH_PASSWORD=your-password \
+  yourusername/psh:latest
+
+# ARM64
+docker run -d \
+  --platform linux/arm64 \
+  --name psh \
+  -p 8443:8443 \
+  -v ~/.ssh:/root/.ssh:ro \
+  -e PSH_PASSWORD=your-password \
+  yourusername/psh:latest
 ```
 
 然后访问 https://localhost:8443
@@ -93,9 +166,22 @@ docker run -d \
   psh:latest
 ```
 
-## 从源码构建
+### 方式三：从源码构建
 
+**依赖要求**
+- Rust 1.70+ (推荐 1.88+)
+- OpenSSL 开发库
+
+**Linux 构建**
 ```bash
+# 安装依赖 (Ubuntu/Debian)
+sudo apt-get update
+sudo apt-get install -y build-essential pkg-config libssl-dev
+
+# 安装依赖 (CentOS/RHEL)
+sudo yum groupinstall "Development Tools"
+sudo yum install openssl-devel
+
 # 克隆仓库
 git clone https://git.epurs.com/psh
 cd psh
@@ -105,6 +191,40 @@ cargo build --release
 
 # 运行
 PSH_PASSWORD=your-password ./target/release/psh
+```
+
+**macOS 构建**
+```bash
+# 安装依赖
+brew install openssl
+
+# 克隆仓库
+git clone https://git.epurs.com/psh
+cd psh
+
+# 构建
+cargo build --release
+
+# 运行
+PSH_PASSWORD=your-password ./target/release/psh
+```
+
+**交叉编译 ARM64**
+```bash
+# 安装交叉编译工具链
+sudo apt-get install -y gcc-aarch64-linux-gnu
+
+# 设置链接器
+export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+
+# 构建 ARM64 二进制
+cargo build --release --target aarch64-unknown-linux-gnu
+```
+
+**构建静态二进制（Alpine Linux）**
+```bash
+# 使用静态链接
+RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --target x86_64-unknown-linux-musl
 ```
 
 ## 审计日志

@@ -31,27 +31,10 @@ struct AppState {
     auth: Arc<AuthService>,
 }
 
-type ConnectionStore = std::collections::HashMap<String, ConnectionInfo>;
-
-#[derive(Clone, Debug)]
-struct ConnectionInfo {
-    id: String,
-    host: String,
-    user: String,
-    connected_at: chrono::DateTime<chrono::Utc>,
-}
-
 #[derive(Debug, serde::Deserialize)]
 struct WsQuery {
     token: Option<String>,
     host: Option<String>,
-    user: Option<String>,
-    port: Option<u16>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct ConnectQuery {
-    host: String,
     user: Option<String>,
     port: Option<u16>,
 }
@@ -176,17 +159,18 @@ async fn auth_middleware(
         .get("Authorization")
         .and_then(|h| h.to_str().ok())
         .and_then(|h| h.strip_prefix("Bearer "))
+        .map(|s| s.to_string())
         .or_else(|| {
             req.uri()
                 .query()
                 .and_then(|q| {
                     urlencoding_decode(q)
-                        .find_map(|(k, v)| if k == "token" { Some(v) } else { None })
+                        .find_map(|(k, v)| if k == "token" { Some(v.to_string()) } else { None })
                 })
         });
 
     match token {
-        Some(token) => {
+        Some(ref token) => {
             match state.auth.validate_token(token) {
                 Ok(_claims) => Ok(next.run(req).await),
                 Err(e) => {
@@ -302,14 +286,14 @@ async fn terminal_ws_handler(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
     // Validate token from query param (since WebSocket can't set headers)
-    let token = match &query.token {
+    let token = match query.token {
         Some(t) => t,
         None => {
             return (StatusCode::UNAUTHORIZED, "Missing token").into_response();
         }
     };
 
-    match state.auth.validate_token(token) {
+    match state.auth.validate_token(&token) {
         Ok(_claims) => {
             let host = query.host.clone();
             let user = query.user.clone();
@@ -342,13 +326,13 @@ async fn handle_terminal_socket(
     let mut current_host: Option<String> = None;
     let mut current_user: Option<String> = None;
 
-    // Helper to send error and close
-    let send_error = |socket: &mut WebSocket, msg: &str| async {
+    // Helper to send error message
+    async fn send_error(socket: &mut WebSocket, msg: &str) {
         let _ = socket.send(Message::Text(serde_json::json!({
             "type": "error",
             "message": msg
         }).to_string())).await;
-    };
+    }
 
     while let Some(Ok(msg)) = socket.recv().await {
         match msg {

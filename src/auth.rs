@@ -39,11 +39,11 @@ impl AuthService {
             use std::hash::{BuildHasher, Hasher};
             let state = RandomState::new();
             let mut hasher = state.build_hasher();
-            hasher.write_u64(std::process::id());
-            hasher.write_u64(chrono::Utc::now().timestamp_millis() as u64);
+            std::process::id().hash(&mut hasher);
+            chrono::Utc::now().timestamp_millis().hash(&mut hasher);
             format!("{:x}", hasher.finish())
         });
-        
+
         Self {
             jwt_secret: secret.into_bytes(),
             jwt_expire,
@@ -53,14 +53,15 @@ impl AuthService {
 
     pub fn verify_password(&self, password: &str) -> bool {
         // Constant-time comparison to prevent timing attacks
-        use std::cmp::Ordering;
         let password_bytes = password.as_bytes();
         let expected_bytes = self.password.as_bytes();
-        
+
+        // Use subtle library for constant-time comparison
+        // For simplicity, we implement basic constant-time comparison
         if password_bytes.len() != expected_bytes.len() {
             return false;
         }
-        
+
         let mut result = 0u8;
         for (a, b) in password_bytes.iter().zip(expected_bytes.iter()) {
             result |= a ^ b;

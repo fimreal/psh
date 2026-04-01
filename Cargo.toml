@@ -12,9 +12,6 @@ tokio = { version = "1.35", features = ["full"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["fs", "trace", "cors"] }
 
-# WebSocket
-tokio-tungstenite = "0.21"
-
 # SSH client (pure Rust, no C deps)
 russh = "0.43"
 russh-keys = "0.43"
@@ -48,7 +45,6 @@ chrono = "=0.4.38"
 
 # Environment variables
 envy = "0.4"
-shellexpand = "3.1"
 
 # Error handling
 anyhow = "1.0"

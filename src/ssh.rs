@@ -147,17 +147,16 @@ impl SshManager {
             Some(config) => {
                 let hostname = config.hostname;
                 let port = port.unwrap_or(config.port);
-                let user = user.or(config.user.as_deref())
+                let username = user.or(config.user.as_deref())
                     .ok_or_else(|| anyhow::anyhow!("No user specified for host '{}'", host))?;
-                let identity_file = config.identity_file;
-                (hostname, port, user.to_string(), identity_file)
+                (hostname, port, username.to_string(), config.identity_file)
             }
             None => {
                 // Host not in config, treat host as hostname
                 let hostname = host.to_string();
                 let port = port.unwrap_or(22);
-                let user = user.ok_or_else(|| anyhow::anyhow!("No user specified for host '{}'", host))?;
-                (hostname, port, user.to_string(), None)
+                let username = user.ok_or_else(|| anyhow::anyhow!("No user specified for host '{}'", host))?;
+                (hostname, port, username.to_string(), None)
             }
         };
         
@@ -171,7 +170,6 @@ impl SshManager {
 pub struct SshSession {
     session: russh::client::Handle<ClientHandler>,
     channel: russh::Channel<russh::ChannelMsg>,
-    read_buffer: Vec<u8>,
 }
 
 struct ClientHandler;
@@ -255,10 +253,9 @@ impl SshSession {
         // Open channel
         let channel = session.channel_open_session().await?;
 
-        Ok(Self { 
-            session, 
+        Ok(Self {
+            session,
             channel,
-            read_buffer: Vec::new(),
         })
     }
 
@@ -269,11 +266,6 @@ impl SshSession {
 
     pub async fn start_shell(&mut self) -> Result<()> {
         self.channel.request_shell(true).await?;
-        Ok(())
-    }
-
-    pub async fn exec_command(&mut self, command: &str) -> Result<()> {
-        self.channel.exec(true, command).await?;
         Ok(())
     }
 
@@ -321,13 +313,6 @@ impl SshSession {
         }
         
         Ok(None)
-    }
-
-    pub async fn resize_pty(&mut self, cols: u32, rows: u32) -> Result<()> {
-        // Note: russh may not support window change directly
-        // This is a placeholder for future implementation
-        debug!("PTY resize requested: {}x{}", cols, rows);
-        Ok(())
     }
 
     pub async fn close(&mut self) -> Result<()> {
