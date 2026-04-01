@@ -5,8 +5,7 @@ edition = "2021"
 
 [dependencies]
 # Web framework
-axum = { version = "0.7", features = ["ws"] }
-axum-extra = { version = "0.9", features = ["typed-header"] }
+axum = "0.7"
 tokio = { version = "1.35", features = ["full"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["fs", "trace", "cors"] }
@@ -42,8 +41,8 @@ rcgen = "0.12"
 tokio-util = { version = "0.7", features = ["codec"] }
 futures = "0.3"
 
-# Time
-chrono = { version = "0.4", features = ["serde"] }
+# Time - pin to older version compatible with rust 1.85
+chrono = "=0.4.38"
 
 # Environment variables
 envy = "0.4"
