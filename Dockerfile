@@ -5,6 +5,9 @@ RUN apk add --no-cache musl-dev openssl-dev pkgconfig
 
 WORKDIR /app
 
+# Copy cargo config for rsproxy
+COPY .cargo/config.toml /root/.cargo/config.toml
+
 # Copy manifests
 COPY Cargo.toml ./
 
