@@ -1,7 +1,7 @@
 # Build stage
-FROM rust:1.75-alpine AS builder
+FROM rust:latest AS builder
 
-RUN apk add --no-cache musl-dev openssl-dev pkgconfig
+RUN apt-get update && apt-get install -y musl-dev pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -21,9 +21,9 @@ COPY src ./src
 RUN cargo build --release
 
 # Runtime stage
-FROM alpine:3.19
+FROM debian:bookworm-slim
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apt-get update && apt-get install -y ca-certificates tzdata && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
