@@ -44,6 +44,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config libssl-dev build-essential
 
+      - name: Set CC for native build
+        run: |
+          echo "CC=gcc" >> $GITHUB_ENV
+          echo "CXX=g++" >> $GITHUB_ENV
+
       - name: Install cross-compilation tools for ARM64
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
@@ -100,6 +105,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config libssl-dev build-essential
+
+      - name: Set CC for native build
+        run: |
+          echo "CC=gcc" >> $GITHUB_ENV
+          echo "CXX=g++" >> $GITHUB_ENV
 
       - name: Install rustfmt and clippy
         run: rustup component add rustfmt clippy
