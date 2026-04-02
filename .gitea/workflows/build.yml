@@ -15,7 +15,7 @@ env:
 jobs:
   build:
     name: Build ${{ matrix.target }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-amd64
     strategy:
       fail-fast: false
       matrix:
@@ -98,7 +98,7 @@ jobs:
 
   test:
     name: Test and Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-amd64
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -144,7 +144,7 @@ jobs:
 
   docker:
     name: Build Docker Image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-amd64
     needs: [build, test]
     if: startsWith(gitea.ref, 'refs/tags/v')
     steps:
@@ -184,7 +184,7 @@ jobs:
 
   release:
     name: Create Release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-amd64
     needs: [build, test]
     if: startsWith(gitea.ref, 'refs/tags/v')
     steps:
@@ -249,7 +249,7 @@ jobs:
 
   notify:
     name: Notify Build Status
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-amd64
     needs: [build, test, docker, release]
     if: always() && startsWith(gitea.ref, 'refs/tags/v')
     steps:
