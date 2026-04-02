@@ -16,8 +16,6 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ubuntu-latest
-    container:
-      image: rust:latest
     strategy:
       fail-fast: false
       matrix:
@@ -33,26 +31,24 @@ jobs:
             platform: linux
 
     steps:
-      - name: Install Node.js (required for actions)
-        run: |
-          apt-get update
-          apt-get install -y curl
-          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-          apt-get install -y nodejs
-
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install Rust 1.94.0
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.94.0
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
       - name: Install build dependencies
         run: |
-          apt-get update
-          apt-get install -y pkg-config libssl-dev
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev
 
       - name: Install cross-compilation tools for ARM64
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
-          apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITEA_ENV
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Add Rust target
         run: rustup target add ${{ matrix.target }}
@@ -91,23 +87,19 @@ jobs:
   test:
     name: Test and Lint
     runs-on: ubuntu-latest
-    container:
-      image: rust:latest
     steps:
-      - name: Install Node.js (required for actions)
-        run: |
-          apt-get update
-          apt-get install -y curl
-          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-          apt-get install -y nodejs
-
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install Rust 1.94.0
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.94.0
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
       - name: Install build dependencies
         run: |
-          apt-get update
-          apt-get install -y pkg-config libssl-dev
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev
 
       - name: Install rustfmt and clippy
         run: rustup component add rustfmt clippy
@@ -138,8 +130,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build, test]
     if: startsWith(gitea.ref, 'refs/tags/v')
-    container:
-      image: catthehacker/ubuntu:act-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
