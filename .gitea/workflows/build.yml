@@ -13,19 +13,16 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  build:
-    name: Build ${{ matrix.target }}
+  build-and-test:
+    name: Build and Test
     runs-on: ubuntu-latest-amd64
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Linux AMD64
           - target: x86_64-unknown-linux-gnu
             arch: amd64
             platform: linux
-
-          # Linux ARM64 (cross-compile)
           - target: aarch64-unknown-linux-gnu
             arch: arm64
             platform: linux
@@ -34,33 +31,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Rust 1.94.0
+      - name: Install Rust
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.94.0
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev build-essential
-
-      - name: Set CC for native build
-        run: |
-          echo "CC=gcc" >> $GITHUB_ENV
-          echo "CXX=g++" >> $GITHUB_ENV
-
-      - name: Install cross-compilation tools for ARM64
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          echo "CC=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-          echo "CXX=aarch64-linux-gnu-g++" >> $GITHUB_ENV
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-
-      - name: Add Rust target
-        run: rustup target add ${{ matrix.target }}
-
-      - name: Cache cargo registry
+      - name: Cache cargo
         uses: actions/cache@v4
         with:
           path: |
@@ -72,8 +48,40 @@ jobs:
             ${{ runner.os }}-cargo-${{ matrix.target }}-
             ${{ runner.os }}-cargo-
 
-      - name: Build binary
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev build-essential
+
+      - name: Setup cross-compilation for ARM64
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          echo "CC=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "CXX=aarch64-linux-gnu-g++" >> $GITHUB_ENV
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build
         run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Run tests (native only)
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: cargo test --verbose
+
+      - name: Check formatting
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          rustup component add rustfmt
+          cargo fmt -- --check
+
+      - name: Run clippy
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          rustup component add clippy
+          cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Prepare binary
         run: |
@@ -91,56 +99,10 @@ jobs:
             target/${{ matrix.target }}/release/psh-${{ matrix.platform }}-${{ matrix.arch }}.sha256
           retention-days: 7
 
-  test:
-    name: Test and Lint
-    runs-on: ubuntu-latest-amd64
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust 1.94.0
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.94.0
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev build-essential
-
-      - name: Set CC for native build
-        run: |
-          echo "CC=gcc" >> $GITHUB_ENV
-          echo "CXX=g++" >> $GITHUB_ENV
-
-      - name: Install rustfmt and clippy
-        run: rustup component add rustfmt clippy
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-test-
-            ${{ runner.os }}-cargo-
-
-      - name: Run tests
-        run: cargo test --verbose
-
-      - name: Check formatting
-        run: cargo fmt -- --check
-
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
   docker:
     name: Build Docker Image
     runs-on: ubuntu-latest-amd64
-    needs: [build, test]
+    needs: build-and-test
     if: startsWith(gitea.ref, 'refs/tags/v')
     steps:
       - name: Checkout code
@@ -180,7 +142,7 @@ jobs:
   release:
     name: Create Release
     runs-on: ubuntu-latest-amd64
-    needs: [build, test]
+    needs: build-and-test
     if: startsWith(gitea.ref, 'refs/tags/v')
     steps:
       - name: Checkout code
@@ -197,12 +159,11 @@ jobs:
           mkdir -p release-files
           find artifacts -name "*.tar.gz" -exec cp {} release-files/ \;
           find artifacts -name "*.sha256" -exec cp {} release-files/ \;
-          cd release-files
-          ls -lh
+          ls -lh release-files/
 
       - name: Extract version
         id: version
-        run: echo "VERSION=${GITEA_REF#refs/tags/}" >> $GITEA_OUTPUT
+        run: echo "VERSION=${GITEA_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -211,56 +172,28 @@ jobs:
           body: |
             ## Release ${{ steps.version.outputs.VERSION }}
 
-            ### 📦 Downloads
+            ### Downloads
 
             | Platform | Architecture | Download |
             |----------|--------------|----------|
             | Linux | AMD64 (x86_64) | `psh-linux-amd64.tar.gz` |
             | Linux | ARM64 (aarch64) | `psh-linux-arm64.tar.gz` |
 
-            ### 🐳 Docker Images
+            ### Docker Images
 
             ```bash
-            # Pull from Docker Hub
             docker pull ${{ secrets.DOCKER_USERNAME }}/psh:${{ steps.version.outputs.VERSION }}
             docker pull ${{ secrets.DOCKER_USERNAME }}/psh:latest
             ```
 
-            ### 🔐 Verification
-
-            Each `.tar.gz` file has a corresponding `.sha256` checksum file. Verify downloads:
+            ### Verification
 
             ```bash
             sha256sum -c psh-linux-amd64.sha256
             ```
-
-            ### 📋 Changelog
 
             See [CHANGELOG.md](CHANGELOG.md) for details.
           draft: false
           prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
         env:
           GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
-
-  notify:
-    name: Notify Build Status
-    runs-on: ubuntu-latest-amd64
-    needs: [build, test, docker, release]
-    if: always() && startsWith(gitea.ref, 'refs/tags/v')
-    steps:
-      - name: Determine build status
-        id: status
-        run: |
-          if [[ "${{ needs.build.result }}" == "success" && "${{ needs.test.result }}" == "success" ]]; then
-            echo "status=success" >> $GITEA_OUTPUT
-            echo "emoji=✅" >> $GITEA_OUTPUT
-          else
-            echo "status=failure" >> $GITEA_OUTPUT
-            echo "emoji=❌" >> $GITEA_OUTPUT
-          fi
-
-      - name: Send notification
-        run: |
-          echo "Build Status: ${{ steps.status.outputs.emoji }} ${{ steps.status.outputs.status }}"
-          echo "Version: ${GITEA_REF#refs/tags/}"
-          # Add webhook notification here (Slack, Discord, Email, etc.)
