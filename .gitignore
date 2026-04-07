@@ -27,6 +27,9 @@ target/
 # Claude Code
 .claude/
 
+# Cargo config (local mirrors, etc.)
+.cargo/
+
 # Logs
 *.log
 logs/

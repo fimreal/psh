@@ -1,9 +1,9 @@
 # psh - WebSSH Proxy
 
-[![Build Status](https://img.shields.io/github/actions/workflow/status/your-org/psh/build.yml?branch=main)](https://github.com/your-org/psh/actions)
-[![Docker Pulls](https://img.shields.io/docker/pulls/yourusername/psh.svg)](https://hub.docker.com/r/yourusername/psh)
-[![License](https://img.shields.io/github/license/your-org/psh.svg)](LICENSE)
-[![Release](https://img.shields.io/github/release/your-org/psh.svg)](https://github.com/your-org/psh/releases)
+[![Build Status](https://git.epurs.com/gitops/psh/actions/workflows/build.yml/badge.svg?branch=main)](https://git.epurs.com/gitops/psh/actions)
+[![Latest Release](https://git.epurs.com/gitops/psh/releases/latest/badge.svg)](https://git.epurs.com/gitops/psh/releases)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Docker](https://img.shields.io/docker/v/fimreal/psh/latest?label=docker)](https://hub.docker.com/r/fimreal/psh)
 
 > 🚀 浏览器 SSH 跳板机 - 在受限网络中通过 Web 安全连接 SSH 服务器
 
