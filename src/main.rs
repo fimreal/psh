@@ -10,7 +10,6 @@ use axum::{
 use axum::extract::ws::{Message, WebSocket};
 use std::sync::Arc;
 use std::net::SocketAddr;
-// // use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 mod config;
@@ -19,7 +18,7 @@ mod audit;
 mod auth;
 
 use config::Config;
-use ssh::{SshManager, SshSession};
+use ssh::SshManager;
 use audit::AuditLogger;
 use auth::AuthService;
 
@@ -37,12 +36,6 @@ struct WsQuery {
     host: Option<String>,
     user: Option<String>,
     port: Option<u16>,
-}
-
-#[derive(Debug, serde::Serialize)]
-struct ConnectResponse {
-    session_id: String,
-    status: String,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -134,7 +127,7 @@ async fn main() -> anyhow::Result<()> {
     // Start server
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     let socket_addr: std::net::SocketAddr = listener.local_addr()?;
-    
+
     if let Some(tls_config) = tls_config {
         info!("TLS enabled - using HTTPS");
         axum_server::tls_rustls::bind_rustls(socket_addr, tls_config)
@@ -165,8 +158,8 @@ async fn auth_middleware(
             req.uri()
                 .query()
                 .and_then(|q| {
-                    urlencoding_decode(q)
-                        .find_map(|(k, v)| if k == "token" { Some(v.to_string()) } else { None })
+                    parse_query_string(q)
+                        .find_map(|(k, v)| if k == "token" { Some(decode_url(v)) } else { None })
                 })
         });
 
@@ -187,8 +180,8 @@ async fn auth_middleware(
     }
 }
 
-// Simple URL query string decoder
-fn urlencoding_decode(s: &str) -> impl Iterator<Item = (&str, &str)> {
+// Parse query string into key-value pairs
+fn parse_query_string(s: &str) -> impl Iterator<Item = (&str, &str)> {
     s.split('&').filter_map(|pair| {
         let mut parts = pair.splitn(2, '=');
         let key = parts.next()?;
@@ -197,19 +190,48 @@ fn urlencoding_decode(s: &str) -> impl Iterator<Item = (&str, &str)> {
     })
 }
 
+// URL decode a string
+fn decode_url(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            if let (Some(h), Some(l)) = (chars.next(), chars.next()) {
+                if let (Some(hv), Some(lv)) = (h.to_digit(16), l.to_digit(16)) {
+                    result.push(char::from_u32(hv * 16 + lv).unwrap_or(c));
+                    continue;
+                }
+            }
+        } else if c == '+' {
+            result.push(' ');
+            continue;
+        }
+        result.push(c);
+    }
+
+    result
+}
+
 // Route handlers
 async fn index_handler() -> Html<&'static str> {
     Html(include_str!("../static/index.html"))
 }
 
 async fn static_handler(axum::extract::Path(path): axum::extract::Path<String>) -> impl IntoResponse {
+    // Security: prevent path traversal attacks
+    // Normalize the path and ensure it doesn't contain directory traversal
+    if path.contains("..") || path.contains('\\') || path.starts_with('/') {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+
     let mime_type = match path.rsplit('.').next() {
         Some("js") => "application/javascript",
         Some("css") => "text/css",
         Some("html") => "text/html",
         _ => "application/octet-stream",
     };
-    
+
     let file_path = format!("static/{}", path);
     match tokio::fs::read(&file_path).await {
         Ok(content) => (
@@ -299,7 +321,7 @@ async fn terminal_ws_handler(
             let host = query.host.clone();
             let user = query.user.clone();
             let port = query.port;
-            
+
             ws.on_upgrade(move |socket| {
                 handle_terminal_socket(socket, state, host, user, port, addr)
             })
@@ -322,166 +344,177 @@ async fn handle_terminal_socket(
     let session_id = uuid::Uuid::new_v4().to_string();
     info!("New WebSocket session {} from {}", session_id, addr);
 
-    // Wait for initial connection message from client
-    let mut ssh_session: Option<SshSession> = None;
+    let mut ssh_session: Option<ssh::SshSession> = None;
     let mut current_host: Option<String> = None;
-    let mut current_user: Option<String> = None;
 
     // Helper to send error message
     async fn send_error(socket: &mut WebSocket, msg: &str) {
-        let _ = socket.send(Message::Text(serde_json::json!({
+        if let Err(e) = socket.send(Message::Text(serde_json::json!({
             "type": "error",
             "message": msg
-        }).to_string())).await;
+        }).to_string())).await {
+            error!("Failed to send error message: {}", e);
+        }
     }
 
-    while let Some(Ok(msg)) = socket.recv().await {
-        match msg {
-            Message::Text(text) => {
-                // Parse JSON message
-                match serde_json::from_str::<serde_json::Value>(&text) {
-                    Ok(json) => {
-                        let msg_type = json.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                        
-                        match msg_type {
-                            "connect" => {
-                                // Connection request
-                                let target_host = json.get("host")
-                                    .and_then(|h| h.as_str())
-                                    .or(host.as_deref());
-                                let target_user = json.get("user")
-                                    .and_then(|u| u.as_str())
-                                    .or(user.as_deref());
-                                let target_port = json.get("port")
-                                    .and_then(|p| p.as_u64())
-                                    .map(|p| p as u16)
-                                    .or(port);
-
-                                match target_host {
-                                    Some(h) => {
-                                        match state.ssh_manager.connect(h, target_user, target_port).await {
-                                            Ok(mut session) => {
-                                                current_host = Some(h.to_string());
-                                                current_user = target_user.map(|s| s.to_string());
-                                                
-                                                // Request PTY and start shell
-                                                if let Err(e) = session.request_pty("xterm-256color", 80, 24).await {
-                                                    error!("Failed to request PTY: {}", e);
-                                                    send_error(&mut socket, &format!("Failed to request PTY: {}", e)).await;
-                                                    continue;
-                                                }
-                                                if let Err(e) = session.start_shell().await {
-                                                    error!("Failed to start shell: {}", e);
-                                                    send_error(&mut socket, &format!("Failed to start shell: {}", e)).await;
-                                                    continue;
-                                                }
-
-                                                ssh_session = Some(session);
-                                                
-                                                // Log connection
-                                                let _ = state.audit.log_connection(
-                                                    &session_id,
-                                                    h,
-                                                    target_user,
-                                                ).await;
-
-                                                // Send connected message
-                                                let _ = socket.send(Message::Text(serde_json::json!({
-                                                    "type": "connected",
-                                                    "session_id": session_id,
-                                                    "host": h,
-                                                    "user": target_user
-                                                }).to_string())).await;
-                                                
-                                                info!("SSH connection established: {}@{}", 
-                                                    target_user.unwrap_or("default"), h);
-                                            }
-                                            Err(e) => {
-                                                error!("Failed to connect to {}: {}", h, e);
-                                                send_error(&mut socket, &format!("Connection failed: {}", e)).await;
-                                            }
-                                        }
-                                    }
-                                    None => {
-                                        send_error(&mut socket, "No host specified").await;
-                                    }
-                                }
-                            }
-                            "input" => {
-                                // User input to SSH session
-                                if let Some(ref mut session) = ssh_session {
-                                    if let Some(data) = json.get("data").and_then(|d| d.as_str()) {
-                                        if let Err(e) = session.write(data.as_bytes()).await {
-                                            error!("Failed to write to SSH session: {}", e);
-                                        }
-                                    }
-                                }
-                            }
-                            "resize" => {
-                                // Terminal resize
-                                if let Some(ref mut session) = ssh_session {
-                                    let cols = json.get("cols").and_then(|c| c.as_u64()).unwrap_or(80) as u32;
-                                    let rows = json.get("rows").and_then(|r| r.as_u64()).unwrap_or(24) as u32;
-                                    
-                                    // Note: russh doesn't support terminal resize directly
-                                    // This would require channel resize which is not in the current API
-                                    debug!("Terminal resize requested: {}x{}", cols, rows);
-                                }
-                            }
-                            _ => {
-                                debug!("Unknown message type: {}", msg_type);
-                            }
-                        }
-                    }
-                    Err(_e) => {
-                        // Not JSON, treat as raw input (backward compatibility)
-                        if let Some(ref mut session) = ssh_session {
-                            if let Err(e) = session.write(text.as_bytes()).await {
-                                error!("Failed to write to SSH session: {}", e);
-                            }
-                        }
-                    }
-                }
-            }
-            Message::Binary(data) => {
-                // Binary input to SSH session
-                if let Some(ref mut session) = ssh_session {
-                    if let Err(e) = session.write(&data).await {
-                        error!("Failed to write binary to SSH session: {}", e);
-                    }
-                }
-            }
-            Message::Ping(data) => {
-                let _ = socket.send(Message::Pong(data)).await;
-            }
-            Message::Pong(_) => {}
-            Message::Close(_) => {
-                info!("WebSocket session {} closed by client", session_id);
-                break;
+    // Helper to poll SSH output
+    async fn poll_ssh_output(session: &ssh::SshSession, socket: &mut WebSocket) -> bool {
+        while let Some(output) = session.try_get_output() {
+            let output_b64 = base64_engine::encode(&output);
+            if let Err(e) = socket.send(Message::Text(serde_json::json!({
+                "type": "output",
+                "data": output_b64
+            }).to_string())).await {
+                error!("Failed to send output: {}", e);
+                return false;
             }
         }
+        true
+    }
 
-        // Read output from SSH session if connected
-        if let Some(ref mut session) = ssh_session {
-            // Try to read output (non-blocking)
-            match session.read_output().await {
-                Ok(Some(output)) => {
-                    let output_b64 = base64_engine::encode(&output);
-                    if let Err(e) = socket.send(Message::Text(serde_json::json!({
-                        "type": "output",
-                        "data": output_b64
-                    }).to_string())).await {
-                        error!("Failed to send output: {}", e);
+    loop {
+        tokio::select! {
+            // Handle WebSocket messages from client
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(msg)) => {
+                        match msg {
+                            Message::Text(text) => {
+                                match serde_json::from_str::<serde_json::Value>(&text) {
+                                    Ok(json) => {
+                                        let msg_type = json.get("type").and_then(|t| t.as_str()).unwrap_or("");
+
+                                        match msg_type {
+                                            "connect" => {
+                                                let target_host = json.get("host")
+                                                    .and_then(|h| h.as_str())
+                                                    .or(host.as_deref());
+                                                let target_user = json.get("user")
+                                                    .and_then(|u| u.as_str())
+                                                    .or(user.as_deref());
+                                                let target_port = json.get("port")
+                                                    .and_then(|p| p.as_u64())
+                                                    .map(|p| p as u16)
+                                                    .or(port);
+
+                                                match target_host {
+                                                    Some(h) => {
+                                                        match state.ssh_manager.connect(h, target_user, target_port).await {
+                                                            Ok(mut session) => {
+                                                                current_host = Some(h.to_string());
+
+                                                                if let Err(e) = session.request_pty("xterm-256color", 80, 24).await {
+                                                                    error!("Failed to request PTY: {}", e);
+                                                                    send_error(&mut socket, &format!("Failed to request PTY: {}", e)).await;
+                                                                    continue;
+                                                                }
+                                                                if let Err(e) = session.start_shell().await {
+                                                                    error!("Failed to start shell: {}", e);
+                                                                    send_error(&mut socket, &format!("Failed to start shell: {}", e)).await;
+                                                                    continue;
+                                                                }
+
+                                                                if let Err(e) = state.audit.log_connection(
+                                                                    &session_id,
+                                                                    h,
+                                                                    target_user,
+                                                                ).await {
+                                                                    error!("Failed to log connection: {}", e);
+                                                                }
+
+                                                                if let Err(e) = socket.send(Message::Text(serde_json::json!({
+                                                                    "type": "connected",
+                                                                    "session_id": session_id,
+                                                                    "host": h,
+                                                                    "user": target_user
+                                                                }).to_string())).await {
+                                                                    error!("Failed to send connected message: {}", e);
+                                                                }
+
+                                                                ssh_session = Some(session);
+                                                                info!("SSH connection established: {}@{}",
+                                                                    target_user.unwrap_or("default"), h);
+                                                            }
+                                                            Err(e) => {
+                                                                error!("Failed to connect to {}: {}", h, e);
+                                                                send_error(&mut socket, &format!("Connection failed: {}", e)).await;
+                                                            }
+                                                        }
+                                                    }
+                                                    None => {
+                                                        send_error(&mut socket, "No host specified").await;
+                                                    }
+                                                }
+                                            }
+                                            "input" => {
+                                                if let Some(ref mut session) = ssh_session {
+                                                    if let Some(data) = json.get("data").and_then(|d| d.as_str()) {
+                                                        if let Err(e) = session.write(data.as_bytes()).await {
+                                                            error!("Failed to write to SSH session: {}", e);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            "resize" => {
+                                                if let Some(ref mut session) = ssh_session {
+                                                    let cols = json.get("cols").and_then(|c| c.as_u64()).unwrap_or(80) as u32;
+                                                    let rows = json.get("rows").and_then(|r| r.as_u64()).unwrap_or(24) as u32;
+
+                                                    if let Err(e) = session.resize(cols, rows).await {
+                                                        debug!("Failed to resize terminal: {}", e);
+                                                    }
+                                                }
+                                            }
+                                            _ => {
+                                                debug!("Unknown message type: {}", msg_type);
+                                            }
+                                        }
+                                    }
+                                    Err(_e) => {
+                                        if let Some(ref mut session) = ssh_session {
+                                            if let Err(e) = session.write(text.as_bytes()).await {
+                                                error!("Failed to write to SSH session: {}", e);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Message::Binary(data) => {
+                                if let Some(ref mut session) = ssh_session {
+                                    if let Err(e) = session.write(&data).await {
+                                        error!("Failed to write binary to SSH session: {}", e);
+                                    }
+                                }
+                            }
+                            Message::Ping(data) => {
+                                if let Err(e) = socket.send(Message::Pong(data)).await {
+                                    error!("Failed to send pong: {}", e);
+                                }
+                            }
+                            Message::Pong(_) => {}
+                            Message::Close(_) => {
+                                info!("WebSocket session {} closed by client", session_id);
+                                break;
+                            }
+                        }
+                    }
+                    Some(Err(e)) => {
+                        error!("WebSocket error: {}", e);
+                        break;
+                    }
+                    None => {
+                        info!("WebSocket session {} closed", session_id);
                         break;
                     }
                 }
-                Ok(None) => {
-                    // No data available, continue
-                }
-                Err(e) => {
-                    error!("Failed to read from SSH session: {}", e);
-                    send_error(&mut socket, &format!("SSH read error: {}", e)).await;
-                    break;
+            }
+
+            // Periodically check for SSH output (every 10ms)
+            _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
+                if let Some(ref session) = ssh_session {
+                    if !poll_ssh_output(session, &mut socket).await {
+                        break;
+                    }
                 }
             }
         }
@@ -489,11 +522,15 @@ async fn handle_terminal_socket(
 
     // Cleanup
     if let Some(host) = &current_host {
-        let _ = state.audit.log_disconnection(&session_id, host).await;
+        if let Err(e) = state.audit.log_disconnection(&session_id, host).await {
+            error!("Failed to log disconnection: {}", e);
+        }
     }
-    
+
     if let Some(mut session) = ssh_session {
-        let _ = session.close().await;
+        if let Err(e) = session.close().await {
+            error!("Failed to close SSH session: {}", e);
+        }
     }
 
     info!("WebSocket session {} ended", session_id);
@@ -502,7 +539,7 @@ async fn handle_terminal_socket(
 // Base64 encoder for output
 mod base64_engine {
     use base64::{engine::general_purpose::STANDARD, Engine};
-    
+
     pub fn encode(data: &[u8]) -> String {
         STANDARD.encode(data)
     }

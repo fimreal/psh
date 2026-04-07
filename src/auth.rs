@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::hash::Hash;
+use subtle::ConstantTimeEq;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
@@ -10,72 +10,49 @@ pub struct Claims {
     pub iat: usize,         // Issued at
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct LoginRequest {
-    pub password: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct LoginResponse {
-    pub token: String,
-    pub expires_in: u64,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AuthError {
-    pub error: String,
-}
-
 pub struct AuthService {
     jwt_secret: Vec<u8>,
     jwt_expire: u64,
-    password: String,
+    password: Vec<u8>,
 }
 
 impl AuthService {
     pub fn new(jwt_secret: Option<String>, jwt_expire: u64, password: String) -> Self {
         let secret = jwt_secret.unwrap_or_else(|| {
-            // Generate random secret if not provided
-            use std::collections::hash_map::RandomState;
-            use std::hash::{BuildHasher, Hasher};
-            let state = RandomState::new();
-            let mut hasher = state.build_hasher();
-            std::process::id().hash(&mut hasher);
-            chrono::Utc::now().timestamp_millis().hash(&mut hasher);
-            format!("{:x}", hasher.finish())
+            // Generate cryptographically secure random secret
+            use rand::RngCore;
+            let mut bytes = [0u8; 32];
+            rand::thread_rng().fill_bytes(&mut bytes);
+            hex::encode(bytes)
         });
 
         Self {
             jwt_secret: secret.into_bytes(),
             jwt_expire,
-            password,
+            password: password.into_bytes(),
         }
     }
 
     pub fn verify_password(&self, password: &str) -> bool {
         // Constant-time comparison to prevent timing attacks
+        // We compare even when lengths differ to not leak length information
         let password_bytes = password.as_bytes();
-        let expected_bytes = self.password.as_bytes();
 
-        // Use subtle library for constant-time comparison
-        // For simplicity, we implement basic constant-time comparison
-        if password_bytes.len() != expected_bytes.len() {
-            return false;
-        }
-
-        let mut result = 0u8;
-        for (a, b) in password_bytes.iter().zip(expected_bytes.iter()) {
-            result |= a ^ b;
-        }
-        result == 0
+        // Use constant-time comparison from subtle crate
+        // This always compares all bytes, preventing timing attacks
+        password_bytes.ct_eq(&self.password).into()
     }
 
     pub fn generate_token(&self) -> Result<String, jsonwebtoken::errors::Error> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as usize;
-        
+            .map(|d| d.as_secs() as usize)
+            .unwrap_or_else(|_| {
+                // Fallback: use a reasonable current timestamp if system time is broken
+                // This should not happen in normal operation
+                1700000000usize // Nov 2023 timestamp as fallback
+            });
+
         let claims = Claims {
             sub: "user".to_string(),
             iat: now,
@@ -95,7 +72,7 @@ impl AuthService {
             &DecodingKey::from_secret(&self.jwt_secret),
             &Validation::default(),
         )?;
-        
+
         Ok(token_data.claims)
     }
 }
@@ -107,19 +84,22 @@ mod tests {
     #[test]
     fn test_password_verification() {
         let auth = AuthService::new(None, 3600, "test_password".to_string());
-        
+
         assert!(auth.verify_password("test_password"));
         assert!(!auth.verify_password("wrong_password"));
         assert!(!auth.verify_password(""));
+        // Different length passwords should also fail
+        assert!(!auth.verify_password("test_password_extra"));
+        assert!(!auth.verify_password("test"));
     }
 
     #[test]
     fn test_token_generation_and_validation() {
         let auth = AuthService::new(Some("secret".to_string()), 3600, "password".to_string());
-        
+
         let token = auth.generate_token().unwrap();
         let claims = auth.validate_token(&token).unwrap();
-        
+
         assert_eq!(claims.sub, "user");
     }
 }

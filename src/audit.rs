@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
-use tracing::{info, error, debug};
+use tracing::{info, debug};
 use chrono::Utc;
 use serde::Serialize;
 
@@ -72,7 +72,7 @@ impl AuditLogger {
 
     pub async fn log_disconnection(&self, session_id: &str, host: &str) -> anyhow::Result<()> {
         info!("Audit: Disconnection - session={}, host={}", session_id, host);
-        
+
         self.write_event(AuditEvent {
             timestamp: Utc::now().to_rfc3339(),
             event_type: "disconnection".to_string(),
@@ -81,20 +81,6 @@ impl AuditLogger {
             user: None,
             command: None,
             error: None,
-        }).await
-    }
-
-    pub async fn log_error(&self, session_id: &str, host: Option<&str>, error: &str) -> anyhow::Result<()> {
-        error!("Audit: Error - session={}, host={:?}, error={}", session_id, host, error);
-        
-        self.write_event(AuditEvent {
-            timestamp: Utc::now().to_rfc3339(),
-            event_type: "error".to_string(),
-            session_id: session_id.to_string(),
-            host: host.map(|s| s.to_string()),
-            user: None,
-            command: None,
-            error: Some(error.to_string()),
         }).await
     }
 }
