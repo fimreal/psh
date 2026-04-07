@@ -1,10 +1,10 @@
+use anyhow::Result;
+use russh_keys::key;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, info, warn};
-use anyhow::Result;
-use russh_keys::key;
 
 pub struct SshManager {
     config_path: PathBuf,
@@ -124,7 +124,8 @@ impl SshManager {
 
         info!("Parsed {} hosts from SSH config", hosts.len());
         for (name, host) in hosts.iter() {
-            debug!("Host: {} -> {}@{}:{}",
+            debug!(
+                "Host: {} -> {}@{}:{}",
                 name,
                 host.user.as_deref().unwrap_or("default"),
                 host.hostname,
@@ -135,21 +136,28 @@ impl SshManager {
         Ok(())
     }
 
-    pub async fn connect(&self, host: &str, user: Option<&str>, port: Option<u16>) -> Result<SshSession> {
+    pub async fn connect(
+        &self,
+        host: &str,
+        user: Option<&str>,
+        port: Option<u16>,
+    ) -> Result<SshSession> {
         let host_config = self.get_host_config(host).await;
 
         let (hostname, port, username, identity_file) = match host_config {
             Some(config) => {
                 let hostname = config.hostname;
                 let port = port.unwrap_or(config.port);
-                let username = user.or(config.user.as_deref())
+                let username = user
+                    .or(config.user.as_deref())
                     .ok_or_else(|| anyhow::anyhow!("No user specified for host '{}'", host))?;
                 (hostname, port, username.to_string(), config.identity_file)
             }
             None => {
                 let hostname = host.to_string();
                 let port = port.unwrap_or(22);
-                let username = user.ok_or_else(|| anyhow::anyhow!("No user specified for host '{}'", host))?;
+                let username =
+                    user.ok_or_else(|| anyhow::anyhow!("No user specified for host '{}'", host))?;
                 (hostname, port, username.to_string(), None)
             }
         };
@@ -197,7 +205,10 @@ impl russh::client::Handler for ClientHandler {
         }
 
         warn!("Server key not found in known_hosts - accepting anyway");
-        warn!("Server key fingerprint: {}", server_public_key.fingerprint());
+        warn!(
+            "Server key fingerprint: {}",
+            server_public_key.fingerprint()
+        );
         Ok(true)
     }
 }
@@ -212,17 +223,18 @@ impl SshSession {
         let config = Arc::new(russh::client::Config::default());
         let handler = ClientHandler;
 
-        let mut session = russh::client::connect(
-            config,
-            (host, port),
-            handler,
-        ).await?;
+        let mut session = russh::client::connect(config, (host, port), handler).await?;
 
         if let Some(key_path) = identity_file {
             let key_pair = load_secret_key(key_path, None)?;
-            let auth_res = session.authenticate_publickey(user.to_string(), Arc::new(key_pair)).await?;
+            let auth_res = session
+                .authenticate_publickey(user.to_string(), Arc::new(key_pair))
+                .await?;
             if !auth_res {
-                return Err(anyhow::anyhow!("Public key authentication failed for {}", host));
+                return Err(anyhow::anyhow!(
+                    "Public key authentication failed for {}",
+                    host
+                ));
             }
         } else {
             let home = std::env::var("HOME").unwrap_or_default();
@@ -236,7 +248,10 @@ impl SshSession {
                 if std::path::Path::new(key_path).exists() {
                     match load_secret_key(&PathBuf::from(key_path), None) {
                         Ok(key_pair) => {
-                            match session.authenticate_publickey(user.to_string(), Arc::new(key_pair)).await {
+                            match session
+                                .authenticate_publickey(user.to_string(), Arc::new(key_pair))
+                                .await
+                            {
                                 Ok(true) => {
                                     authenticated = true;
                                     info!("Authenticated with key: {}", key_path);
@@ -270,35 +285,31 @@ impl SshSession {
         let reader_task = tokio::spawn(async move {
             loop {
                 let mut guard = ch_clone.lock().await;
-                match tokio::time::timeout(
-                    std::time::Duration::from_millis(50),
-                    guard.wait()
-                ).await {
-                    Ok(Some(msg)) => {
-                        match msg {
-                            russh::ChannelMsg::Data { data } => {
-                                let bytes = data.as_ref().to_vec();
-                                if !bytes.is_empty() {
-                                    if output_tx.send(Ok(bytes)).await.is_err() {
-                                        break;
-                                    }
+                match tokio::time::timeout(std::time::Duration::from_millis(50), guard.wait()).await
+                {
+                    Ok(Some(msg)) => match msg {
+                        russh::ChannelMsg::Data { data } => {
+                            let bytes = data.as_ref().to_vec();
+                            if !bytes.is_empty() {
+                                if output_tx.send(Ok(bytes)).await.is_err() {
+                                    break;
                                 }
                             }
-                            russh::ChannelMsg::ExtendedData { data, ext: _ } => {
-                                let bytes = data.as_ref().to_vec();
-                                if !bytes.is_empty() {
-                                    if output_tx.send(Ok(bytes)).await.is_err() {
-                                        break;
-                                    }
-                                }
-                            }
-                            russh::ChannelMsg::Eof | russh::ChannelMsg::Close => {
-                                let _ = output_tx.send(Err("EOF".to_string())).await;
-                                break;
-                            }
-                            _ => {}
                         }
-                    }
+                        russh::ChannelMsg::ExtendedData { data, ext: _ } => {
+                            let bytes = data.as_ref().to_vec();
+                            if !bytes.is_empty() {
+                                if output_tx.send(Ok(bytes)).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        russh::ChannelMsg::Eof | russh::ChannelMsg::Close => {
+                            let _ = output_tx.send(Err("EOF".to_string())).await;
+                            break;
+                        }
+                        _ => {}
+                    },
                     Ok(None) => break,
                     Err(_) => {
                         drop(guard);
@@ -319,7 +330,9 @@ impl SshSession {
 
     pub async fn request_pty(&mut self, term: &str, cols: u32, rows: u32) -> Result<()> {
         let channel = self.channel.lock().await;
-        channel.request_pty(true, term, cols, rows, 0, 0, &[]).await?;
+        channel
+            .request_pty(true, term, cols, rows, 0, 0, &[])
+            .await?;
         Ok(())
     }
 
@@ -380,5 +393,6 @@ fn load_secret_key(path: &PathBuf, passphrase: Option<&str>) -> Result<key::KeyP
         russh_keys::decode_secret_key(&content, Some(pass))
     } else {
         russh_keys::decode_secret_key(&content, None)
-    }.map_err(|e| anyhow::anyhow!("Failed to decode secret key: {:?}", e))
+    }
+    .map_err(|e| anyhow::anyhow!("Failed to decode secret key: {:?}", e))
 }

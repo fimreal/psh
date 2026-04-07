@@ -1,13 +1,13 @@
-use serde::{Deserialize, Serialize};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use subtle::ConstantTimeEq;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
-    pub sub: String,        // Subject (username)
-    pub exp: usize,         // Expiration time
-    pub iat: usize,         // Issued at
+    pub sub: String, // Subject (username)
+    pub exp: usize,  // Expiration time
+    pub iat: usize,  // Issued at
 }
 
 pub struct AuthService {

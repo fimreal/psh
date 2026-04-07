@@ -1,9 +1,9 @@
+use chrono::Utc;
+use serde::Serialize;
 use std::path::PathBuf;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
-use tracing::{info, debug};
-use chrono::Utc;
-use serde::Serialize;
+use tracing::{debug, info};
 
 pub struct AuditLogger {
     log_path: PathBuf,
@@ -41,24 +41,32 @@ impl AuditLogger {
 
     async fn write_event(&self, event: AuditEvent) -> anyhow::Result<()> {
         let line = serde_json::to_string(&event)?;
-        
+
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&self.log_path)
             .await?;
-        
+
         file.write_all(line.as_bytes()).await?;
         file.write_all(b"\n").await?;
         file.flush().await?;
-        
+
         debug!("Audit event logged: {}", event.event_type);
         Ok(())
     }
 
-    pub async fn log_connection(&self, session_id: &str, host: &str, user: Option<&str>) -> anyhow::Result<()> {
-        info!("Audit: Connection - session={}, host={}, user={:?}", session_id, host, user);
-        
+    pub async fn log_connection(
+        &self,
+        session_id: &str,
+        host: &str,
+        user: Option<&str>,
+    ) -> anyhow::Result<()> {
+        info!(
+            "Audit: Connection - session={}, host={}, user={:?}",
+            session_id, host, user
+        );
+
         self.write_event(AuditEvent {
             timestamp: Utc::now().to_rfc3339(),
             event_type: "connection".to_string(),
@@ -67,11 +75,15 @@ impl AuditLogger {
             user: user.map(|s| s.to_string()),
             command: None,
             error: None,
-        }).await
+        })
+        .await
     }
 
     pub async fn log_disconnection(&self, session_id: &str, host: &str) -> anyhow::Result<()> {
-        info!("Audit: Disconnection - session={}, host={}", session_id, host);
+        info!(
+            "Audit: Disconnection - session={}, host={}",
+            session_id, host
+        );
 
         self.write_event(AuditEvent {
             timestamp: Utc::now().to_rfc3339(),
@@ -81,6 +93,7 @@ impl AuditLogger {
             user: None,
             command: None,
             error: None,
-        }).await
+        })
+        .await
     }
 }

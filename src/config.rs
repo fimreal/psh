@@ -35,12 +35,24 @@ struct EnvConfig {
     psh_password: String,
 }
 
-fn default_host() -> String { "0.0.0.0".to_string() }
-fn default_port() -> u16 { 8443 }
-fn default_ssh_config() -> PathBuf { PathBuf::from("/root/.ssh/config") }
-fn default_audit_log() -> PathBuf { PathBuf::from("/var/log/psh/audit.jsonl") }
-fn default_auto_certs() -> bool { true }
-fn default_jwt_expire() -> u64 { 86400 }
+fn default_host() -> String {
+    "0.0.0.0".to_string()
+}
+fn default_port() -> u16 {
+    8443
+}
+fn default_ssh_config() -> PathBuf {
+    PathBuf::from("/root/.ssh/config")
+}
+fn default_audit_log() -> PathBuf {
+    PathBuf::from("/var/log/psh/audit.jsonl")
+}
+fn default_auto_certs() -> bool {
+    true
+}
+fn default_jwt_expire() -> u64 {
+    86400
+}
 
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
@@ -62,14 +74,20 @@ impl Config {
     }
 }
 
-pub async fn load_tls_config(config: &Config) -> anyhow::Result<Option<axum_server::tls_rustls::RustlsConfig>> {
+pub async fn load_tls_config(
+    config: &Config,
+) -> anyhow::Result<Option<axum_server::tls_rustls::RustlsConfig>> {
     use axum_server::tls_rustls::RustlsConfig;
     use std::path::Path;
 
     // If explicit cert/key paths provided, use them
     if let (Some(cert_path), Some(key_path)) = (&config.tls_cert_path, &config.tls_key_path) {
         if Path::new(cert_path).exists() && Path::new(key_path).exists() {
-            tracing::info!("Loading TLS certificates from {:?} and {:?}", cert_path, key_path);
+            tracing::info!(
+                "Loading TLS certificates from {:?} and {:?}",
+                cert_path,
+                key_path
+            );
             let config = RustlsConfig::from_pem_file(cert_path, key_path).await?;
             return Ok(Some(config));
         } else {
@@ -81,10 +99,7 @@ pub async fn load_tls_config(config: &Config) -> anyhow::Result<Option<axum_serv
     if config.auto_generate_certs {
         tracing::info!("Generating self-signed TLS certificates");
         let (cert_pem, key_pem) = generate_self_signed_cert()?;
-        let config = RustlsConfig::from_pem(
-            cert_pem.into_bytes(),
-            key_pem.into_bytes()
-        ).await?;
+        let config = RustlsConfig::from_pem(cert_pem.into_bytes(), key_pem.into_bytes()).await?;
         return Ok(Some(config));
     }
 
@@ -105,7 +120,8 @@ fn generate_self_signed_cert() -> anyhow::Result<(String, String)> {
     let cert = generate_simple_self_signed(subject_alt_names)
         .map_err(|e| anyhow::anyhow!("Failed to generate self-signed certificate: {}", e))?;
 
-    let cert_pem = cert.serialize_pem()
+    let cert_pem = cert
+        .serialize_pem()
         .map_err(|e| anyhow::anyhow!("Failed to serialize certificate: {}", e))?;
     let key_pem = cert.serialize_private_key_pem();
 

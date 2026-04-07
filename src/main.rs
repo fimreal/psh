@@ -1,3 +1,4 @@
+use axum::extract::ws::{Message, WebSocket};
 use axum::{
     body::Body,
     extract::{ConnectInfo, Query, State, WebSocketUpgrade},
@@ -7,20 +8,19 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use axum::extract::ws::{Message, WebSocket};
-use std::sync::Arc;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
-mod config;
-mod ssh;
 mod audit;
 mod auth;
+mod config;
+mod ssh;
 
-use config::Config;
-use ssh::SshManager;
 use audit::AuditLogger;
 use auth::AuthService;
+use config::Config;
+use ssh::SshManager;
 
 #[derive(Clone)]
 struct AppState {
@@ -57,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into())
+                .add_directive(tracing::Level::INFO.into()),
         )
         .with_target(true)
         .with_timer(tracing_subscriber::fmt::time::uptime())
@@ -67,7 +67,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Load configuration
     let config = Arc::new(Config::from_env()?);
-    info!("Configuration loaded: host={}, port={}", config.host, config.port);
+    info!(
+        "Configuration loaded: host={}, port={}",
+        config.host, config.port
+    );
 
     // Initialize auth service
     if config.password.is_empty() {
@@ -105,11 +108,13 @@ async fn main() -> anyhow::Result<()> {
     let protected_routes = Router::new()
         .route("/ws/terminal", get(terminal_ws_handler))
         .route("/api/hosts", get(list_hosts_handler))
-        .route_layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ));
 
     // Static files
-    let static_routes = Router::new()
-        .route("/static/*path", get(static_handler));
+    let static_routes = Router::new().route("/static/*path", get(static_handler));
 
     // Combine all routes
     let app = Router::new()
@@ -135,7 +140,11 @@ async fn main() -> anyhow::Result<()> {
             .await?;
     } else {
         warn!("TLS not configured - using HTTP (not recommended for production)");
-        axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await?;
     }
 
     Ok(())
@@ -155,24 +164,25 @@ async fn auth_middleware(
         .and_then(|h| h.strip_prefix("Bearer "))
         .map(|s| s.to_string())
         .or_else(|| {
-            req.uri()
-                .query()
-                .and_then(|q| {
-                    parse_query_string(q)
-                        .find_map(|(k, v)| if k == "token" { Some(decode_url(v)) } else { None })
+            req.uri().query().and_then(|q| {
+                parse_query_string(q).find_map(|(k, v)| {
+                    if k == "token" {
+                        Some(decode_url(v))
+                    } else {
+                        None
+                    }
                 })
+            })
         });
 
     match token {
-        Some(ref token) => {
-            match state.auth.validate_token(token) {
-                Ok(_claims) => Ok(next.run(req).await),
-                Err(e) => {
-                    warn!("Invalid token: {}", e);
-                    Err(StatusCode::UNAUTHORIZED)
-                }
+        Some(ref token) => match state.auth.validate_token(token) {
+            Ok(_claims) => Ok(next.run(req).await),
+            Err(e) => {
+                warn!("Invalid token: {}", e);
+                Err(StatusCode::UNAUTHORIZED)
             }
-        }
+        },
         None => {
             warn!("No token provided");
             Err(StatusCode::UNAUTHORIZED)
@@ -218,7 +228,9 @@ async fn index_handler() -> Html<&'static str> {
     Html(include_str!("../static/index.html"))
 }
 
-async fn static_handler(axum::extract::Path(path): axum::extract::Path<String>) -> impl IntoResponse {
+async fn static_handler(
+    axum::extract::Path(path): axum::extract::Path<String>,
+) -> impl IntoResponse {
     // Security: prevent path traversal attacks
     // Normalize the path and ensure it doesn't contain directory traversal
     if path.contains("..") || path.contains('\\') || path.starts_with('/') {
@@ -234,10 +246,7 @@ async fn static_handler(axum::extract::Path(path): axum::extract::Path<String>) 
 
     let file_path = format!("static/{}", path);
     match tokio::fs::read(&file_path).await {
-        Ok(content) => (
-            [(axum::http::header::CONTENT_TYPE, mime_type)],
-            content,
-        ).into_response(),
+        Ok(content) => ([(axum::http::header::CONTENT_TYPE, mime_type)], content).into_response(),
         Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -284,12 +293,17 @@ async fn list_hosts_handler(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<HostInfo>>, (StatusCode, Json<ErrorResponse>)> {
     match state.ssh_manager.list_hosts_detailed().await {
-        Ok(hosts) => Ok(Json(hosts.into_iter().map(|h| HostInfo {
-            name: h.name,
-            hostname: h.hostname,
-            user: h.user,
-            port: h.port,
-        }).collect())),
+        Ok(hosts) => Ok(Json(
+            hosts
+                .into_iter()
+                .map(|h| HostInfo {
+                    name: h.name,
+                    hostname: h.hostname,
+                    user: h.user,
+                    port: h.port,
+                })
+                .collect(),
+        )),
         Err(e) => {
             error!("Failed to list hosts: {}", e);
             Err((
@@ -349,10 +363,16 @@ async fn handle_terminal_socket(
 
     // Helper to send error message
     async fn send_error(socket: &mut WebSocket, msg: &str) {
-        if let Err(e) = socket.send(Message::Text(serde_json::json!({
-            "type": "error",
-            "message": msg
-        }).to_string())).await {
+        if let Err(e) = socket
+            .send(Message::Text(
+                serde_json::json!({
+                    "type": "error",
+                    "message": msg
+                })
+                .to_string(),
+            ))
+            .await
+        {
             error!("Failed to send error message: {}", e);
         }
     }
@@ -361,10 +381,16 @@ async fn handle_terminal_socket(
     async fn poll_ssh_output(session: &ssh::SshSession, socket: &mut WebSocket) -> bool {
         while let Some(output) = session.try_get_output() {
             let output_b64 = base64_engine::encode(&output);
-            if let Err(e) = socket.send(Message::Text(serde_json::json!({
-                "type": "output",
-                "data": output_b64
-            }).to_string())).await {
+            if let Err(e) = socket
+                .send(Message::Text(
+                    serde_json::json!({
+                        "type": "output",
+                        "data": output_b64
+                    })
+                    .to_string(),
+                ))
+                .await
+            {
                 error!("Failed to send output: {}", e);
                 return false;
             }
