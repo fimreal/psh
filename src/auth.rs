@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::hash::Hash;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {

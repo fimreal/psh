@@ -80,10 +80,10 @@ pub async fn load_tls_config(config: &Config) -> anyhow::Result<Option<axum_serv
     // Auto-generate self-signed certs if enabled
     if config.auto_generate_certs {
         tracing::info!("Generating self-signed TLS certificates");
-        let cert = generate_self_signed_cert()?;
+        let (cert_pem, key_pem) = generate_self_signed_cert()?;
         let config = RustlsConfig::from_pem(
-            cert.cert_pem().into_bytes(),
-            cert.key_pair().serialize_pem().into_bytes()
+            cert_pem.into_bytes(),
+            key_pem.into_bytes()
         ).await?;
         return Ok(Some(config));
     }
@@ -93,7 +93,7 @@ pub async fn load_tls_config(config: &Config) -> anyhow::Result<Option<axum_serv
     Ok(None)
 }
 
-fn generate_self_signed_cert() -> anyhow::Result<rcgen::CertifiedKey> {
+fn generate_self_signed_cert() -> anyhow::Result<(String, String)> {
     use rcgen::generate_simple_self_signed;
 
     let subject_alt_names = vec![
@@ -102,6 +102,12 @@ fn generate_self_signed_cert() -> anyhow::Result<rcgen::CertifiedKey> {
         "psh.local".to_string(),
     ];
 
-    generate_simple_self_signed(subject_alt_names)
-        .map_err(|e| anyhow::anyhow!("Failed to generate self-signed certificate: {}", e))
+    let cert = generate_simple_self_signed(subject_alt_names)
+        .map_err(|e| anyhow::anyhow!("Failed to generate self-signed certificate: {}", e))?;
+
+    let cert_pem = cert.serialize_pem()
+        .map_err(|e| anyhow::anyhow!("Failed to serialize certificate: {}", e))?;
+    let key_pem = cert.serialize_private_key_pem();
+
+    Ok((cert_pem, key_pem))
 }

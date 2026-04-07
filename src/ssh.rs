@@ -2,8 +2,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 use anyhow::Result;
+use russh_keys::key;
 
 pub struct SshManager {
     config_path: PathBuf,
@@ -169,7 +170,7 @@ impl SshManager {
 // SSH session implementation
 pub struct SshSession {
     session: russh::client::Handle<ClientHandler>,
-    channel: russh::Channel<russh::ChannelMsg>,
+    channel: russh::Channel<russh::client::Msg>,
 }
 
 struct ClientHandler;
@@ -180,7 +181,7 @@ impl russh::client::Handler for ClientHandler {
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &russh::keys::key::PublicKey,
+        _server_public_key: &key::PublicKey,
     ) -> Result<bool, Self::Error> {
         // Accept all keys - in production, check against known_hosts
         // TODO: Implement proper host key verification
@@ -290,7 +291,7 @@ impl SshSession {
                             return Ok(Some(bytes));
                         }
                     }
-                    russh::ChannelMsg::ExtendedData { data, ext } => {
+                    russh::ChannelMsg::ExtendedData { data, ext: _ } => {
                         // stderr (ext == 1)
                         let bytes = data.as_ref().to_vec();
                         if !bytes.is_empty() {
@@ -322,12 +323,12 @@ impl SshSession {
 }
 
 // Load SSH private key
-fn load_secret_key(path: &PathBuf, passphrase: Option<&str>) -> Result<russh::keys::key::KeyPair> {
+fn load_secret_key(path: &PathBuf, passphrase: Option<&str>) -> Result<key::KeyPair> {
     let content = std::fs::read_to_string(path)?;
     
     if let Some(pass) = passphrase {
-        russh::keys::decode_secret_key(&content, Some(pass.as_bytes()))
+        russh_keys::decode_secret_key(&content, Some(pass))
     } else {
-        russh::keys::decode_secret_key(&content, None)
+        russh_keys::decode_secret_key(&content, None)
     }.map_err(|e| anyhow::anyhow!("Failed to decode secret key: {:?}", e))
 }

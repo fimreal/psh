@@ -10,7 +10,7 @@ use axum::{
 use axum::extract::ws::{Message, WebSocket};
 use std::sync::Arc;
 use std::net::SocketAddr;
-use tokio::sync::RwLock;
+// // use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 mod config;
@@ -133,10 +133,11 @@ async fn main() -> anyhow::Result<()> {
 
     // Start server
     let listener = tokio::net::TcpListener::bind(&addr).await?;
+    let socket_addr: std::net::SocketAddr = listener.local_addr()?;
     
     if let Some(tls_config) = tls_config {
         info!("TLS enabled - using HTTPS");
-        axum_server::tls_rustls::bind_rustls(listener, tls_config)
+        axum_server::tls_rustls::bind_rustls(socket_addr, tls_config)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
             .await?;
     } else {
@@ -359,7 +360,7 @@ async fn handle_terminal_socket(
                                 match target_host {
                                     Some(h) => {
                                         match state.ssh_manager.connect(h, target_user, target_port).await {
-                                            Ok(session) => {
+                                            Ok(mut session) => {
                                                 current_host = Some(h.to_string());
                                                 current_user = target_user.map(|s| s.to_string());
                                                 
@@ -432,7 +433,7 @@ async fn handle_terminal_socket(
                             }
                         }
                     }
-                    Err(e) => {
+                    Err(_e) => {
                         // Not JSON, treat as raw input (backward compatibility)
                         if let Some(ref mut session) = ssh_session {
                             if let Err(e) = session.write(text.as_bytes()).await {
