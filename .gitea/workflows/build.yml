@@ -29,6 +29,11 @@ jobs:
             platform: linux
 
     steps:
+      - name: Install Node.js (required for checkout action)
+        run: |
+          apt-get update
+          apt-get install -y nodejs
+
       - name: Checkout code
         uses: actions/checkout@v4
 
