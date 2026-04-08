@@ -135,7 +135,9 @@ async fn main() -> anyhow::Result<()> {
 
     if let Some(tls_config) = tls_config {
         info!("TLS enabled - using HTTPS");
-        axum_server::tls_rustls::bind_rustls(socket_addr, tls_config)
+        axum_server::Server::bind()
+            .addr(socket_addr)
+            .tls_config(tls_config)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
             .await?;
     } else {

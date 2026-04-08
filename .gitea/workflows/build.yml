@@ -91,7 +91,7 @@ jobs:
           sha256sum psh-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz > psh-${{ matrix.platform }}-${{ matrix.arch }}.sha256
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: psh-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
@@ -148,17 +148,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download all artifacts
-        uses: actions/download-artifact@v3
+      - name: Download AMD64 artifact
+        uses: actions/download-artifact@v4
         with:
-          path: artifacts
-          pattern: psh-*
+          name: psh-linux-amd64
+          path: artifacts/psh-linux-amd64
+
+      - name: Download ARM64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: psh-linux-arm64
+          path: artifacts/psh-linux-arm64
 
       - name: Prepare release files
         run: |
           mkdir -p release-files
-          find artifacts -name "*.tar.gz" -exec cp {} release-files/ \;
-          find artifacts -name "*.sha256" -exec cp {} release-files/ \;
+          cp artifacts/psh-linux-amd64/*.tar.gz release-files/
+          cp artifacts/psh-linux-amd64/*.sha256 release-files/
+          cp artifacts/psh-linux-arm64/*.tar.gz release-files/
+          cp artifacts/psh-linux-arm64/*.sha256 release-files/
           ls -lh release-files/
 
       - name: Extract version
