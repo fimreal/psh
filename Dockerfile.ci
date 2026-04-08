@@ -1,0 +1,43 @@
+# syntax=docker/dockerfile:1
+# Lightweight Dockerfile for CI - uses pre-built binaries
+# Usage: docker build -f Dockerfile.ci --build-arg TARGETARCH=amd64 .
+
+ARG TARGETARCH=amd64
+FROM alpine:3.19
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    ca-certificates \
+    tzdata \
+    bash
+
+WORKDIR /app
+
+# Copy pre-built binary (must be extracted before docker build)
+COPY psh /usr/local/bin/psh
+RUN chmod +x /usr/local/bin/psh
+
+# Copy static files
+COPY static /app/static
+
+# Create necessary directories
+RUN mkdir -p /var/log/psh /root/.ssh && \
+    chmod 700 /root/.ssh
+
+# Expose default port
+EXPOSE 8443
+
+# Environment defaults
+ENV PSH_HOST=0.0.0.0 \
+    PSH_PORT=8443 \
+    PSH_SSH_CONFIG=/root/.ssh/config \
+    PSH_AUDIT_LOG=/var/log/psh/audit.jsonl \
+    PSH_AUTO_CERTS=true \
+    RUST_LOG=info
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8443/ || exit 1
+
+# Run the binary
+ENTRYPOINT ["/usr/local/bin/psh"]
