@@ -28,6 +28,9 @@ RUN mkdir src && \
 # Copy actual source code
 COPY src ./src
 
+# Copy static files for build
+COPY static ./static
+
 # Build the actual binary
 RUN cargo build --release
 
