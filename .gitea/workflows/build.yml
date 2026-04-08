@@ -37,7 +37,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v3
         with:
           path: |
             ~/.cargo/registry
@@ -91,7 +91,7 @@ jobs:
           sha256sum psh-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz > psh-${{ matrix.platform }}-${{ matrix.arch }}.sha256
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: psh-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
@@ -149,13 +149,13 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Download AMD64 artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v3
         with:
           name: psh-linux-amd64
           path: artifacts/psh-linux-amd64
 
       - name: Download ARM64 artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v3
         with:
           name: psh-linux-arm64
           path: artifacts/psh-linux-arm64
