@@ -144,15 +144,15 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(async move {
         use tokio_stream::StreamExt;
 
-        let mut sigterm =
-            tokio_stream::wrappers::SignalStream::new(tokio::signal::unix::signal(
-                tokio::signal::unix::SignalKind::terminate()
-            ).expect("Failed to install SIGTERM handler"));
+        let mut sigterm = tokio_stream::wrappers::SignalStream::new(
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("Failed to install SIGTERM handler"),
+        );
 
-        let mut sigint =
-            tokio_stream::wrappers::SignalStream::new(tokio::signal::unix::signal(
-                tokio::signal::unix::SignalKind::interrupt()
-            ).expect("Failed to install SIGINT handler"));
+        let mut sigint = tokio_stream::wrappers::SignalStream::new(
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+                .expect("Failed to install SIGINT handler"),
+        );
 
         tokio::select! {
             _ = sigterm.next() => {
@@ -288,10 +288,7 @@ async fn static_handler(
     };
 
     // Security: prevent path traversal attacks (check decoded path)
-    if decoded_path.contains("..")
-        || decoded_path.contains('\\')
-        || decoded_path.starts_with('/')
-    {
+    if decoded_path.contains("..") || decoded_path.contains('\\') || decoded_path.starts_with('/') {
         return StatusCode::BAD_REQUEST.into_response();
     }
 
@@ -319,9 +316,9 @@ async fn static_handler(
         Ok(content) => {
             // Set cache control based on file type
             let cache_control = match mime_type {
-                "application/javascript" | "text/css" => "public, max-age=31536000",  // 1 year
+                "application/javascript" | "text/css" => "public, max-age=31536000", // 1 year
                 "text/html" => "no-cache",
-                _ => "public, max-age=3600",  // 1 hour
+                _ => "public, max-age=3600", // 1 hour
             };
 
             // Add security and cache headers
@@ -666,7 +663,10 @@ async fn handle_terminal_socket(
     if let Some(host) = &current_host {
         // Log disconnection - audit failure is logged but doesn't block cleanup
         if let Err(e) = state.audit.log_disconnection(&session_id, host).await {
-            error!("CRITICAL: Failed to log disconnection audit: {} - audit trail incomplete", e);
+            error!(
+                "CRITICAL: Failed to log disconnection audit: {} - audit trail incomplete",
+                e
+            );
         }
     }
 

@@ -56,7 +56,8 @@ impl AuditLogger {
                     warn!("Audit log write attempt {} failed: {}", attempt, e);
                     last_error = Some(e);
                     if attempt < self.max_retries {
-                        tokio::time::sleep(std::time::Duration::from_millis(100 * attempt as u64)).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(100 * attempt as u64))
+                            .await;
                     }
                 }
             }

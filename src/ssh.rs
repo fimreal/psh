@@ -206,9 +206,7 @@ impl russh::client::Handler for ClientHandler {
 
         // Security: Reject unknown host keys instead of accepting them
         // This prevents MITM attacks
-        warn!(
-            "Server key not found in known_hosts - CONNECTION REJECTED for security"
-        );
+        warn!("Server key not found in known_hosts - CONNECTION REJECTED for security");
         warn!(
             "Server key fingerprint: {}",
             server_public_key.fingerprint()
