@@ -171,7 +171,7 @@ jobs:
 
       - name: Extract version
         id: version
-        run: echo "VERSION=${GITEA_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${GITEA_REF#refs/tags/}" >> $GITEA_OUTPUT
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
