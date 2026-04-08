@@ -11,13 +11,113 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// Input validation functions
+function validateHost(host) {
+    // Allow letters, numbers, dots, hyphens, underscores
+    if (!host || host.length > 255) return false;
+    return /^[a-zA-Z0-9._-]+$/.test(host);
+}
+
+function validatePort(port) {
+    if (!port) return true;  // Optional
+    const p = parseInt(port, 10);
+    return !isNaN(p) && p > 0 && p <= 65535;
+}
+
+function validateUser(user) {
+    if (!user) return true;  // Optional
+    // Allow letters, numbers, underscores, hyphens
+    return /^[a-zA-Z0-9_-]+$/.test(user);
+}
+
+// Resilient WebSocket with automatic reconnection
+class ResilientWebSocket {
+    constructor(url, options = {}) {
+        this.url = url;
+        this.maxRetries = options.maxRetries || 5;
+        this.baseDelay = options.baseDelay || 1000;  // 1 second
+        this.maxDelay = options.maxDelay || 30000;   // 30 seconds
+        this.retries = 0;
+        this.shouldReconnect = true;
+        this.ws = null;
+        this.handlers = {};
+
+        this.connect();
+    }
+
+    connect() {
+        this.ws = new WebSocket(this.url);
+
+        this.ws.onopen = (event) => {
+            this.retries = 0;
+            if (this.handlers.onopen) {
+                this.handlers.onopen(event);
+            }
+        };
+
+        this.ws.onmessage = (event) => {
+            if (this.handlers.onmessage) {
+                this.handlers.onmessage(event);
+            }
+        };
+
+        this.ws.onclose = (event) => {
+            if (this.handlers.onclose) {
+                this.handlers.onclose(event);
+            }
+            this.reconnect();
+        };
+
+        this.ws.onerror = (error) => {
+            if (this.handlers.onerror) {
+                this.handlers.onerror(error);
+            }
+        };
+    }
+
+    reconnect() {
+        if (!this.shouldReconnect || this.retries >= this.maxRetries) {
+            return;
+        }
+
+        this.retries++;
+        const delay = Math.min(
+            this.baseDelay * Math.pow(2, this.retries - 1),
+            this.maxDelay
+        );
+
+        setTimeout(() => this.connect(), delay);
+    }
+
+    send(data) {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(data);
+        }
+    }
+
+    close() {
+        this.shouldReconnect = false;
+        if (this.ws) {
+            this.ws.close();
+        }
+    }
+
+    get readyState() {
+        return this.ws ? this.ws.readyState : WebSocket.CLOSED;
+    }
+
+    on(event, handler) {
+        this.handlers[event] = handler;
+    }
+}
+
 // Application state
 class PshApp {
     constructor() {
         // Token now stored in HttpOnly cookie, no need to manage in JS
         this.sessions = new Map();
         this.activeSessionId = null;
-        
+
         // DOM elements
         this.tabBar = document.getElementById('tabBar');
         this.content = document.getElementById('content');
@@ -28,11 +128,20 @@ class PshApp {
         this.connectionDialog = document.getElementById('connectionDialog');
         this.hostSelect = document.getElementById('hostSelect');
         this.manualHost = document.getElementById('manualHost');
-        
+
         // Bind event handlers
         this.init();
     }
-    
+
+    // Debounce helper function
+    debounce(fn, delay) {
+        let timer = null;
+        return (...args) => {
+            clearTimeout(timer);
+            timer = setTimeout(() => fn.apply(this, args), delay);
+        };
+    }
+
     async init() {
         // Setup event listeners
         document.getElementById('addTabBtn').addEventListener('click', () => this.showConnectionDialog());
@@ -139,9 +248,14 @@ class PshApp {
                     option.textContent = `${host.name} (${host.user || 'user'}@${host.hostname}:${host.port})`;
                     this.hostSelect.appendChild(option);
                 });
+            } else {
+                this.showGlobalError('Failed to Load Hosts',
+                    `Server returned ${response.status}. Please refresh the page.`);
             }
         } catch (e) {
             console.error('Failed to load hosts:', e);
+            this.showGlobalError('Connection Error',
+                'Unable to connect to server. Please check your network.');
         }
     }
     
@@ -160,33 +274,51 @@ class PshApp {
         let host = this.hostSelect.value;
         let user = null;
         let port = null;
-        
+
         if (!host) {
             // Try manual input
             const manual = this.manualHost.value.trim();
             if (!manual) {
-                alert('Please select a host or enter manual connection');
+                this.showError('Please select a host or enter manual connection');
                 return;
             }
-            
+
             // Parse user@host:port
             const parts = manual.split('@');
             if (parts.length === 2) {
                 user = parts[0];
+                if (!validateUser(user)) {
+                    this.showError('Invalid username format');
+                    return;
+                }
                 const hostParts = parts[1].split(':');
                 host = hostParts[0];
                 if (hostParts.length === 2) {
-                    port = parseInt(hostParts[1]);
+                    port = parseInt(hostParts[1], 10);
+                    if (!validatePort(port)) {
+                        this.showError('Invalid port number (must be 1-65535)');
+                        return;
+                    }
                 }
             } else {
                 const hostParts = manual.split(':');
                 host = hostParts[0];
                 if (hostParts.length === 2) {
-                    port = parseInt(hostParts[1]);
+                    port = parseInt(hostParts[1], 10);
+                    if (!validatePort(port)) {
+                        this.showError('Invalid port number (must be 1-65535)');
+                        return;
+                    }
                 }
             }
         }
-        
+
+        // Validate host
+        if (!validateHost(host)) {
+            this.showError('Invalid hostname format');
+            return;
+        }
+
         this.hideConnectionDialog();
         this.createTerminalSession(host, user, port);
     }
@@ -262,9 +394,14 @@ class PshApp {
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${wsProtocol}//${window.location.host}/ws/terminal`;
 
-        const ws = new WebSocket(wsUrl);
-        
-        ws.onopen = () => {
+        // Use ResilientWebSocket for automatic reconnection
+        const ws = new ResilientWebSocket(wsUrl, {
+            maxRetries: 5,
+            baseDelay: 1000,
+            maxDelay: 30000
+        });
+
+        ws.on('open', () => {
             term.writeln('\x1b[32mConnecting to ' + escapeHtml(host) + '...\x1b[0m');
 
             // Send connection request
@@ -275,12 +412,12 @@ class PshApp {
                 port: port
             };
             ws.send(JSON.stringify(connectMsg));
-        };
-        
-        ws.onmessage = (event) => {
+        });
+
+        ws.on('message', (event) => {
             try {
                 const msg = JSON.parse(event.data);
-                
+
                 switch (msg.type) {
                     case 'output':
                         // Decode base64
@@ -305,22 +442,22 @@ class PshApp {
                 // Plain text output
                 term.write(event.data);
             }
-        };
-        
-        ws.onclose = () => {
+        });
+
+        ws.on('close', () => {
             term.writeln('');
-            term.writeln('\x1b[33mConnection closed.\x1b[0m');
-            this.updateStatus('Disconnected', '');
+            term.writeln('\x1b[33mConnection closed. Reconnecting...\x1b[0m');
+            this.updateStatus('Reconnecting', escapeHtml(host));
             const session = this.sessions.get(sessionId);
             if (session) {
                 session.connected = false;
             }
-        };
-        
-        ws.onerror = (error) => {
+        });
+
+        ws.on('error', (error) => {
             term.writeln('\x1b[31mWebSocket error\x1b[0m');
             console.error('WebSocket error:', error);
-        };
+        });
         
         // Handle terminal input
         term.onData((data) => {
@@ -347,9 +484,9 @@ class PshApp {
         
         // Switch to new session
         this.switchToSession(sessionId);
-        
-        // Resize handler
-        const resizeObserver = new ResizeObserver(() => {
+
+        // Resize handler with debounce
+        const handleResize = this.debounce(() => {
             if (container.classList.contains('active')) {
                 fitAddon.fit();
                 const dims = fitAddon.proposeDimensions();
@@ -361,9 +498,11 @@ class PshApp {
                     }));
                 }
             }
-        });
+        }, 200);  // 200ms debounce
+
+        const resizeObserver = new ResizeObserver(handleResize);
         resizeObserver.observe(container);
-        
+
         this.sessions.get(sessionId).resizeObserver = resizeObserver;
     }
     
@@ -439,7 +578,42 @@ class PshApp {
         this.statusText.textContent = status;
         this.connectionInfo.textContent = info;
     }
-    
+
+    showGlobalError(title, message, duration = 5000) {
+        // Create error notification
+        const notification = document.createElement('div');
+        notification.className = 'global-notification';
+        notification.innerHTML = `
+            <div class="notification-title">${escapeHtml(title)}</div>
+            <div class="notification-message">${escapeHtml(message)}</div>
+        `;
+
+        document.body.appendChild(notification);
+
+        // Auto-remove after duration
+        setTimeout(() => {
+            notification.remove();
+        }, duration);
+    }
+
+    showError(message) {
+        // Show error in connection dialog
+        let errorEl = document.getElementById('connectionError');
+        if (!errorEl) {
+            errorEl = document.createElement('div');
+            errorEl.id = 'connectionError';
+            errorEl.className = 'error-msg';
+            this.connectionDialog.appendChild(errorEl);
+        }
+        errorEl.textContent = message;
+        errorEl.classList.remove('hidden');
+
+        // Auto-hide after 3 seconds
+        setTimeout(() => {
+            errorEl.classList.add('hidden');
+        }, 3000);
+    }
+
     onResize() {
         this.sessions.forEach(session => {
             if (session.container.classList.contains('active')) {

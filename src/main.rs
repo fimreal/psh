@@ -317,13 +317,24 @@ async fn static_handler(
     let file_path = format!("static/{}", normalized);
     match tokio::fs::read(&file_path).await {
         Ok(content) => {
-            // Add security headers
+            // Set cache control based on file type
+            let cache_control = match mime_type {
+                "application/javascript" | "text/css" => "public, max-age=31536000",  // 1 year
+                "text/html" => "no-cache",
+                _ => "public, max-age=3600",  // 1 hour
+            };
+
+            // Add security and cache headers
             (
                 [
                     (axum::http::header::CONTENT_TYPE, mime_type),
                     (
                         axum::http::HeaderName::from_static("x-content-type-options"),
                         "nosniff",
+                    ),
+                    (
+                        axum::http::HeaderName::from_static("cache-control"),
+                        cache_control,
                     ),
                 ],
                 content,

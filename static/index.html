@@ -285,6 +285,41 @@
         ::-webkit-scrollbar-thumb:hover {
             background: #4a4a4a;
         }
+
+        /* Global notification styling */
+        .global-notification {
+            position: fixed;
+            top: 60px;
+            right: 20px;
+            background: #c75450;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            z-index: 2000;
+            max-width: 400px;
+            animation: slideIn 0.3s ease;
+        }
+
+        .notification-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .notification-message {
+            font-size: 13px;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
     </style>
 </head>
 <body>
