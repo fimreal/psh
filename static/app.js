@@ -4,10 +4,17 @@
 import { Terminal } from 'https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.mjs';
 import { FitAddon } from 'https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.mjs';
 
+// HTML escape function to prevent XSS attacks
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 // Application state
 class PshApp {
     constructor() {
-        this.token = localStorage.getItem('psh_token');
+        // Token now stored in HttpOnly cookie, no need to manage in JS
         this.sessions = new Map();
         this.activeSessionId = null;
         
@@ -54,7 +61,7 @@ class PshApp {
     async validateToken() {
         try {
             const response = await fetch('/api/hosts', {
-                headers: { 'Authorization': `Bearer ${this.token}` }
+                credentials: 'include'  // Automatically send cookies
             });
             return response.ok;
         } catch {
@@ -94,19 +101,16 @@ class PshApp {
     async handleLogin() {
         const password = document.getElementById('loginPassword').value;
         const errorEl = document.getElementById('loginError');
-        
+
         try {
             const response = await fetch('/api/auth/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',  // Automatically receive and send cookies
                 body: JSON.stringify({ password })
             });
-            
+
             if (response.ok) {
-                const data = await response.json();
-                this.token = data.token;
-                localStorage.setItem('psh_token', this.token);
-                
                 document.getElementById('loginDialog').remove();
                 this.overlay.classList.remove('active');
                 await this.loadHosts();
@@ -123,9 +127,9 @@ class PshApp {
     async loadHosts() {
         try {
             const response = await fetch('/api/hosts', {
-                headers: { 'Authorization': `Bearer ${this.token}` }
+                credentials: 'include'  // Automatically send cookies
             });
-            
+
             if (response.ok) {
                 const hosts = await response.json();
                 this.hostSelect.innerHTML = '<option value="">-- Select host --</option>';
@@ -195,7 +199,7 @@ class PshApp {
         tab.className = 'tab';
         tab.id = `tab-${sessionId}`;
         tab.innerHTML = `
-            <span class="tab-title">${host}</span>
+            <span class="tab-title">${escapeHtml(host)}</span>
             <span class="tab-close">×</span>
         `;
         tab.addEventListener('click', (e) => {
@@ -254,15 +258,15 @@ class PshApp {
         term.open(container);
         fitAddon.fit();
         
-        // Build WebSocket URL
+        // Build WebSocket URL (token now sent via cookie)
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${wsProtocol}//${window.location.host}/ws/terminal?token=${encodeURIComponent(this.token)}`;
-        
+        const wsUrl = `${wsProtocol}//${window.location.host}/ws/terminal`;
+
         const ws = new WebSocket(wsUrl);
         
         ws.onopen = () => {
-            term.writeln('\x1b[32mConnecting to ' + host + '...\x1b[0m');
-            
+            term.writeln('\x1b[32mConnecting to ' + escapeHtml(host) + '...\x1b[0m');
+
             // Send connection request
             const connectMsg = {
                 type: 'connect',
@@ -285,7 +289,7 @@ class PshApp {
                         break;
                     case 'connected':
                         term.writeln('\x1b[32mConnected!\x1b[0m');
-                        this.updateStatus('Connected', `${msg.user || 'user'}@${msg.host}`);
+                        this.updateStatus('Connected', `${escapeHtml(msg.user || 'user')}@${escapeHtml(msg.host)}`);
                         // Update session
                         const session = this.sessions.get(sessionId);
                         if (session) {
@@ -294,7 +298,7 @@ class PshApp {
                         }
                         break;
                     case 'error':
-                        term.writeln('\x1b[31mError: ' + msg.message + '\x1b[0m');
+                        term.writeln('\x1b[31mError: ' + escapeHtml(msg.message) + '\x1b[0m');
                         break;
                 }
             } catch (e) {

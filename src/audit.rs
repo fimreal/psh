@@ -3,13 +3,14 @@ use serde::Serialize;
 use std::path::PathBuf;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 pub struct AuditLogger {
     log_path: PathBuf,
+    max_retries: u8,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 struct AuditEvent {
     timestamp: String,
     #[serde(rename = "type")]
@@ -36,12 +37,35 @@ impl AuditLogger {
 
         Ok(Self {
             log_path: log_path.clone(),
+            max_retries: 3,
         })
     }
 
-    async fn write_event(&self, event: AuditEvent) -> anyhow::Result<()> {
-        let line = serde_json::to_string(&event)?;
+    async fn write_event(&self, event: &AuditEvent) -> anyhow::Result<()> {
+        let line = serde_json::to_string(event)?;
+        let mut last_error = None;
 
+        // Retry logic for robustness
+        for attempt in 1..=self.max_retries {
+            match self.try_write(&line).await {
+                Ok(()) => {
+                    debug!("Audit event logged: {}", event.event_type);
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!("Audit log write attempt {} failed: {}", attempt, e);
+                    last_error = Some(e);
+                    if attempt < self.max_retries {
+                        tokio::time::sleep(std::time::Duration::from_millis(100 * attempt as u64)).await;
+                    }
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Failed to write audit log")))
+    }
+
+    async fn try_write(&self, line: &str) -> anyhow::Result<()> {
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -51,8 +75,6 @@ impl AuditLogger {
         file.write_all(line.as_bytes()).await?;
         file.write_all(b"\n").await?;
         file.flush().await?;
-
-        debug!("Audit event logged: {}", event.event_type);
         Ok(())
     }
 
@@ -67,7 +89,7 @@ impl AuditLogger {
             session_id, host, user
         );
 
-        self.write_event(AuditEvent {
+        self.write_event(&AuditEvent {
             timestamp: Utc::now().to_rfc3339(),
             event_type: "connection".to_string(),
             session_id: session_id.to_string(),
@@ -85,7 +107,7 @@ impl AuditLogger {
             session_id, host
         );
 
-        self.write_event(AuditEvent {
+        self.write_event(&AuditEvent {
             timestamp: Utc::now().to_rfc3339(),
             event_type: "disconnection".to_string(),
             session_id: session_id.to_string(),

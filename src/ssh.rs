@@ -204,12 +204,19 @@ impl russh::client::Handler for ClientHandler {
             }
         }
 
-        warn!("Server key not found in known_hosts - accepting anyway");
+        // Security: Reject unknown host keys instead of accepting them
+        // This prevents MITM attacks
+        warn!(
+            "Server key not found in known_hosts - CONNECTION REJECTED for security"
+        );
         warn!(
             "Server key fingerprint: {}",
             server_public_key.fingerprint()
         );
-        Ok(true)
+        warn!(
+            "To accept this host, add it to your known_hosts file or connect manually via SSH first"
+        );
+        Ok(false)
     }
 }
 
@@ -277,16 +284,21 @@ impl SshSession {
         }
 
         let channel = session.channel_open_session().await?;
-        let (output_tx, output_rx) = mpsc::channel(64);
+        let (output_tx, output_rx) = mpsc::channel(128); // Increased buffer size
 
         // Start background reader task
         let ch = Arc::new(Mutex::new(channel));
         let ch_clone = ch.clone();
         let reader_task = tokio::spawn(async move {
             loop {
-                let mut guard = ch_clone.lock().await;
-                match tokio::time::timeout(std::time::Duration::from_millis(50), guard.wait()).await
-                {
+                // Acquire lock only when needed
+                let msg_result = {
+                    let mut guard = ch_clone.lock().await;
+                    // Use shorter timeout to reduce lock holding time
+                    tokio::time::timeout(std::time::Duration::from_millis(10), guard.wait()).await
+                }; // Lock is released here
+
+                match msg_result {
                     Ok(Some(msg)) => match msg {
                         russh::ChannelMsg::Data { data } => {
                             let bytes = data.as_ref().to_vec();
@@ -308,8 +320,8 @@ impl SshSession {
                     },
                     Ok(None) => break,
                     Err(_) => {
-                        drop(guard);
-                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        // No data available, sleep briefly before retry
+                        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
                     }
                 }
             }
@@ -363,23 +375,43 @@ impl SshSession {
     }
 
     pub async fn close(&mut self) -> Result<()> {
+        self.cleanup().await
+    }
+
+    async fn cleanup(&mut self) -> Result<()> {
         // Abort the reader task first
         if let Some(task) = self.reader_task.take() {
             task.abort();
         }
 
         // Close the channel
-        let channel = self.channel.lock().await;
-        channel.close().await?;
+        if let Ok(channel) = self.channel.try_lock() {
+            let _ = channel.close().await;
+        }
 
         // Disconnect the session
-        let mut session_guard = self.session.lock().await;
-        if let Some(session) = session_guard.take() {
-            drop(session);
+        if let Ok(mut session_guard) = self.session.try_lock() {
+            if let Some(session) = session_guard.take() {
+                drop(session);
+            }
         }
 
         debug!("SSH session closed");
         Ok(())
+    }
+}
+
+impl Drop for SshSession {
+    fn drop(&mut self) {
+        // Abort the reader task synchronously
+        if let Some(task) = self.reader_task.take() {
+            task.abort();
+        }
+
+        // Try to close channel and session if possible
+        // Note: We can't use async in Drop, so we do our best effort
+        // The channel and session will be dropped when Arc refcount reaches 0
+        debug!("SshSession dropped - resources will be cleaned up");
     }
 }
 

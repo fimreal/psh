@@ -28,6 +28,7 @@ struct AppState {
     ssh_manager: Arc<SshManager>,
     audit: Arc<AuditLogger>,
     auth: Arc<AuthService>,
+    shutdown: Arc<tokio::sync::Notify>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -91,12 +92,17 @@ async fn main() -> anyhow::Result<()> {
     let ssh_manager = Arc::new(SshManager::new(&config.ssh_config_path).await?);
     info!("SSH manager initialized: {:?}", config.ssh_config_path);
 
+    // Create shutdown signal
+    let shutdown = Arc::new(tokio::sync::Notify::new());
+    let shutdown_clone = shutdown.clone();
+
     // Create app state
     let state = AppState {
         config: config.clone(),
         ssh_manager,
         audit,
         auth,
+        shutdown: shutdown_clone,
     };
 
     // Public routes (no auth required)
@@ -131,23 +137,67 @@ async fn main() -> anyhow::Result<()> {
 
     // Start server
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    let socket_addr: std::net::SocketAddr = listener.local_addr()?;
 
-    if let Some(tls_config) = tls_config {
+    // Setup signal handler for graceful shutdown
+    let (signal_tx, mut signal_rx) = tokio::sync::mpsc::channel::<()>(1);
+
+    tokio::spawn(async move {
+        use tokio_stream::StreamExt;
+
+        let mut sigterm =
+            tokio_stream::wrappers::SignalStream::new(tokio::signal::unix::signal(
+                tokio::signal::unix::SignalKind::terminate()
+            ).expect("Failed to install SIGTERM handler"));
+
+        let mut sigint =
+            tokio_stream::wrappers::SignalStream::new(tokio::signal::unix::signal(
+                tokio::signal::unix::SignalKind::interrupt()
+            ).expect("Failed to install SIGINT handler"));
+
+        tokio::select! {
+            _ = sigterm.next() => {
+                info!("Received SIGTERM signal");
+            }
+            _ = sigint.next() => {
+                info!("Received SIGINT signal");
+            }
+        }
+
+        let _ = signal_tx.send(()).await;
+    });
+
+    // Run server with signal handling
+    let server_result = if let Some(tls_config) = tls_config {
         info!("TLS enabled - using HTTPS");
-        axum_server::tls_rustls::bind_rustls(socket_addr, tls_config)
-            .serve(app.into_make_service_with_connect_info::<SocketAddr>())
-            .await?;
+        let server = axum_server::from_tcp_rustls(listener.into_std()?, tls_config)
+            .serve(app.into_make_service_with_connect_info::<SocketAddr>());
+
+        tokio::select! {
+            result = server => result,
+            _ = signal_rx.recv() => {
+                info!("Shutting down server gracefully...");
+                // Server will be dropped and connections closed
+                return Ok(());
+            }
+        }
     } else {
         warn!("TLS not configured - using HTTP (not recommended for production)");
-        axum::serve(
+        let server = axum::serve(
             listener,
             app.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .await?;
-    }
+        );
 
-    Ok(())
+        tokio::select! {
+            result = server => result,
+            _ = signal_rx.recv() => {
+                info!("Shutting down server gracefully...");
+                return Ok(());
+            }
+        }
+    };
+
+    info!("Server shutdown complete");
+    server_result.map_err(|e| anyhow::anyhow!("Server error: {}", e))
 }
 
 // Auth middleware
@@ -231,22 +281,55 @@ async fn index_handler() -> Html<&'static str> {
 async fn static_handler(
     axum::extract::Path(path): axum::extract::Path<String>,
 ) -> impl IntoResponse {
-    // Security: prevent path traversal attacks
-    // Normalize the path and ensure it doesn't contain directory traversal
-    if path.contains("..") || path.contains('\\') || path.starts_with('/') {
+    // URL decode first to catch encoded traversal attempts
+    let decoded_path = match urlencoding::decode(&path) {
+        Ok(p) => p,
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+
+    // Security: prevent path traversal attacks (check decoded path)
+    if decoded_path.contains("..")
+        || decoded_path.contains('\\')
+        || decoded_path.starts_with('/')
+    {
         return StatusCode::BAD_REQUEST.into_response();
     }
 
-    let mime_type = match path.rsplit('.').next() {
+    // Normalize path to prevent other bypass methods
+    let normalized = decoded_path.replace("./", "");
+    if normalized.is_empty() {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+
+    // Extended MIME type support
+    let mime_type = match normalized.rsplit('.').next() {
         Some("js") => "application/javascript",
         Some("css") => "text/css",
         Some("html") => "text/html",
+        Some("json") => "application/json",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("svg") => "image/svg+xml",
+        Some("woff") | Some("woff2") => "font/woff2",
         _ => "application/octet-stream",
     };
 
-    let file_path = format!("static/{}", path);
+    let file_path = format!("static/{}", normalized);
     match tokio::fs::read(&file_path).await {
-        Ok(content) => ([(axum::http::header::CONTENT_TYPE, mime_type)], content).into_response(),
+        Ok(content) => {
+            // Add security headers
+            (
+                [
+                    (axum::http::header::CONTENT_TYPE, mime_type),
+                    (
+                        axum::http::HeaderName::from_static("x-content-type-options"),
+                        "nosniff",
+                    ),
+                ],
+                content,
+            )
+                .into_response()
+        }
         Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -259,7 +342,7 @@ struct LoginBody {
 async fn login_handler(
     State(state): State<AppState>,
     Json(body): Json<LoginBody>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     if !state.auth.verify_password(&body.password) {
         return Err((
             StatusCode::UNAUTHORIZED,
@@ -271,11 +354,24 @@ async fn login_handler(
 
     match state.auth.generate_token() {
         Ok(token) => {
+            // Create HttpOnly cookie
+            let cookie = axum_extra::extract::cookie::Cookie::build(("psh_token", token.clone()))
+                .path("/")
+                .http_only(true)
+                .secure(true)
+                .same_site(axum_extra::extract::cookie::SameSite::Strict)
+                .max_age(time::Duration::seconds(state.config.jwt_expire as i64))
+                .build();
+
+            // Return response with cookie (no token in body for security)
             let response = serde_json::json!({
-                "token": token,
                 "expires_in": state.config.jwt_expire,
             });
-            Ok(Json(response))
+
+            Ok((
+                [(axum::http::header::SET_COOKIE, cookie.to_string())],
+                Json(response),
+            ))
         }
         Err(e) => {
             error!("Failed to generate token: {}", e);
@@ -321,12 +417,19 @@ async fn terminal_ws_handler(
     Query(query): Query<WsQuery>,
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    cookies: axum_extra::extract::CookieJar,
 ) -> impl IntoResponse {
-    // Validate token from query param (since WebSocket can't set headers)
-    let token = match query.token {
-        Some(t) => t,
+    // Try to get token from cookie first (preferred), fallback to query param for backward compatibility
+    let token = match cookies.get("psh_token") {
+        Some(cookie) => cookie.value().to_string(),
         None => {
-            return (StatusCode::UNAUTHORIZED, "Missing token").into_response();
+            // Fallback to query parameter (for backward compatibility)
+            match query.token {
+                Some(t) => t,
+                None => {
+                    return (StatusCode::UNAUTHORIZED, "Missing token").into_response();
+                }
+            }
         }
     };
 
@@ -440,12 +543,14 @@ async fn handle_terminal_socket(
                                                                     continue;
                                                                 }
 
+                                                                // Log connection in audit log
+                                                                // Note: Audit failure is logged but doesn't block the connection
                                                                 if let Err(e) = state.audit.log_connection(
                                                                     &session_id,
                                                                     h,
                                                                     target_user,
                                                                 ).await {
-                                                                    error!("Failed to log connection: {}", e);
+                                                                    error!("CRITICAL: Failed to log connection audit: {} - connection proceeding but audit trail incomplete", e);
                                                                 }
 
                                                                 if let Err(e) = socket.send(Message::Text(serde_json::json!({
@@ -546,16 +651,19 @@ async fn handle_terminal_socket(
         }
     }
 
-    // Cleanup
+    // Cleanup - ensure resources are always released
     if let Some(host) = &current_host {
+        // Log disconnection - audit failure is logged but doesn't block cleanup
         if let Err(e) = state.audit.log_disconnection(&session_id, host).await {
-            error!("Failed to log disconnection: {}", e);
+            error!("CRITICAL: Failed to log disconnection audit: {} - audit trail incomplete", e);
         }
     }
 
-    if let Some(mut session) = ssh_session {
+    if let Some(ref mut session) = ssh_session {
+        // Try to close gracefully, but don't fail if it errors
         if let Err(e) = session.close().await {
             error!("Failed to close SSH session: {}", e);
+            // Session will be dropped and cleaned up via Drop trait
         }
     }
 
