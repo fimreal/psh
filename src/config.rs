@@ -88,7 +88,7 @@ pub async fn load_tls_config(
                 cert_path,
                 key_path
             );
-            let config = RustlsConfig::from_pem_file(cert_path, key_path)?;
+            let config = RustlsConfig::from_pem_file(cert_path, key_path).await?;
             return Ok(Some(config));
         } else {
             tracing::warn!("TLS cert/key paths provided but files not found");
@@ -99,7 +99,7 @@ pub async fn load_tls_config(
     if config.auto_generate_certs {
         tracing::info!("Generating self-signed TLS certificates");
         let (cert_pem, key_pem) = generate_self_signed_cert()?;
-        let config = RustlsConfig::from_pem(cert_pem.into_bytes(), key_pem.into_bytes())?;
+        let config = RustlsConfig::from_pem(cert_pem.into_bytes(), key_pem.into_bytes()).await?;
         return Ok(Some(config));
     }
 

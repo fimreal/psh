@@ -290,18 +290,14 @@ impl SshSession {
                     Ok(Some(msg)) => match msg {
                         russh::ChannelMsg::Data { data } => {
                             let bytes = data.as_ref().to_vec();
-                            if !bytes.is_empty() {
-                                if output_tx.send(Ok(bytes)).await.is_err() {
-                                    break;
-                                }
+                            if !bytes.is_empty() && output_tx.send(Ok(bytes)).await.is_err() {
+                                break;
                             }
                         }
                         russh::ChannelMsg::ExtendedData { data, ext: _ } => {
                             let bytes = data.as_ref().to_vec();
-                            if !bytes.is_empty() {
-                                if output_tx.send(Ok(bytes)).await.is_err() {
-                                    break;
-                                }
+                            if !bytes.is_empty() && output_tx.send(Ok(bytes)).await.is_err() {
+                                break;
                             }
                         }
                         russh::ChannelMsg::Eof | russh::ChannelMsg::Close => {
