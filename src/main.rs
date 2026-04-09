@@ -133,7 +133,7 @@ async fn main() -> anyhow::Result<()> {
     let tls_config = config::load_tls_config(&config).await?;
 
     let addr = format!("{}:{}", config.host, config.port);
-    info!("Starting HTTPS server on {}", addr);
+    info!("Starting HTTPS server on {addr}");
 
     // Start server
     let listener = tokio::net::TcpListener::bind(&addr).await?;
@@ -197,7 +197,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     info!("Server shutdown complete");
-    server_result.map_err(|e| anyhow::anyhow!("Server error: {}", e))
+    server_result.map_err(|e| anyhow::anyhow!("Server error: {e}"))
 }
 
 // Auth middleware
@@ -229,7 +229,7 @@ async fn auth_middleware(
         Some(ref token) => match state.auth.validate_token(token) {
             Ok(_claims) => Ok(next.run(req).await),
             Err(e) => {
-                warn!("Invalid token: {}", e);
+                warn!("Invalid token: {e}");
                 Err(StatusCode::UNAUTHORIZED)
             }
         },
@@ -311,7 +311,7 @@ async fn static_handler(
         _ => "application/octet-stream",
     };
 
-    let file_path = format!("static/{}", normalized);
+    let file_path = format!("static/{normalized}");
     match tokio::fs::read(&file_path).await {
         Ok(content) => {
             // Set cache control based on file type
@@ -382,7 +382,7 @@ async fn login_handler(
             ))
         }
         Err(e) => {
-            error!("Failed to generate token: {}", e);
+            error!("Failed to generate token: {e}");
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
@@ -409,7 +409,7 @@ async fn list_hosts_handler(
                 .collect(),
         )),
         Err(e) => {
-            error!("Failed to list hosts: {}", e);
+            error!("Failed to list hosts: {e}");
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
@@ -452,7 +452,7 @@ async fn terminal_ws_handler(
             })
         }
         Err(e) => {
-            warn!("Invalid token for WebSocket: {}", e);
+            warn!("Invalid token for WebSocket: {e}");
             (StatusCode::UNAUTHORIZED, "Invalid token").into_response()
         }
     }
@@ -484,7 +484,7 @@ async fn handle_terminal_socket(
             ))
             .await
         {
-            error!("Failed to send error message: {}", e);
+            error!("Failed to send error message: {e}");
         }
     }
 
@@ -502,7 +502,7 @@ async fn handle_terminal_socket(
                 ))
                 .await
             {
-                error!("Failed to send output: {}", e);
+                error!("Failed to send output: {e}");
                 return false;
             }
         }
@@ -541,12 +541,12 @@ async fn handle_terminal_socket(
                                                                 current_host = Some(h.to_string());
 
                                                                 if let Err(e) = session.request_pty("xterm-256color", 80, 24).await {
-                                                                    error!("Failed to request PTY: {}", e);
+                                                                    error!("Failed to request PTY: {e}");
                                                                     send_error(&mut socket, &format!("Failed to request PTY: {e}")).await;
                                                                     continue;
                                                                 }
                                                                 if let Err(e) = session.start_shell().await {
-                                                                    error!("Failed to start shell: {}", e);
+                                                                    error!("Failed to start shell: {e}");
                                                                     send_error(&mut socket, &format!("Failed to start shell: {e}")).await;
                                                                     continue;
                                                                 }
@@ -567,7 +567,7 @@ async fn handle_terminal_socket(
                                                                     "host": h,
                                                                     "user": target_user
                                                                 }).to_string())).await {
-                                                                    error!("Failed to send connected message: {}", e);
+                                                                    error!("Failed to send connected message: {e}");
                                                                 }
 
                                                                 ssh_session = Some(session);
@@ -589,7 +589,7 @@ async fn handle_terminal_socket(
                                                 if let Some(ref mut session) = ssh_session {
                                                     if let Some(data) = json.get("data").and_then(|d| d.as_str()) {
                                                         if let Err(e) = session.write(data.as_bytes()).await {
-                                                            error!("Failed to write to SSH session: {}", e);
+                                                            error!("Failed to write to SSH session: {e}");
                                                         }
                                                     }
                                                 }
@@ -612,7 +612,7 @@ async fn handle_terminal_socket(
                                     Err(_e) => {
                                         if let Some(ref mut session) = ssh_session {
                                             if let Err(e) = session.write(text.as_bytes()).await {
-                                                error!("Failed to write to SSH session: {}", e);
+                                                error!("Failed to write to SSH session: {e}");
                                             }
                                         }
                                     }
@@ -621,13 +621,13 @@ async fn handle_terminal_socket(
                             Message::Binary(data) => {
                                 if let Some(ref mut session) = ssh_session {
                                     if let Err(e) = session.write(&data).await {
-                                        error!("Failed to write binary to SSH session: {}", e);
+                                        error!("Failed to write binary to SSH session: {e}");
                                     }
                                 }
                             }
                             Message::Ping(data) => {
                                 if let Err(e) = socket.send(Message::Pong(data)).await {
-                                    error!("Failed to send pong: {}", e);
+                                    error!("Failed to send pong: {e}");
                                 }
                             }
                             Message::Pong(_) => {}
@@ -638,7 +638,7 @@ async fn handle_terminal_socket(
                         }
                     }
                     Some(Err(e)) => {
-                        error!("WebSocket error: {}", e);
+                        error!("WebSocket error: {e}");
                         break;
                     }
                     None => {
@@ -673,7 +673,7 @@ async fn handle_terminal_socket(
     if let Some(ref mut session) = ssh_session {
         // Try to close gracefully, but don't fail if it errors
         if let Err(e) = session.close().await {
-            error!("Failed to close SSH session: {}", e);
+            error!("Failed to close SSH session: {e}");
             // Session will be dropped and cleaned up via Drop trait
         }
     }
