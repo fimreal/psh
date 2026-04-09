@@ -16,7 +16,7 @@ jobs:
   build-and-test:
     name: Build and Test
     runs-on: ubuntu-latest
-    container: rust:1.85
+    container: rust:1.88
     strategy:
       fail-fast: false
       matrix:
