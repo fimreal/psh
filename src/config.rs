@@ -57,7 +57,7 @@ fn default_jwt_expire() -> u64 {
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
         let env_cfg: EnvConfig = envy::from_env()
-            .map_err(|e| anyhow::anyhow!("Failed to parse environment variables: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to parse environment variables: {e}"))?;
 
         Ok(Self {
             host: env_cfg.psh_host,
@@ -118,11 +118,11 @@ fn generate_self_signed_cert() -> anyhow::Result<(String, String)> {
     ];
 
     let cert = generate_simple_self_signed(subject_alt_names)
-        .map_err(|e| anyhow::anyhow!("Failed to generate self-signed certificate: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to generate self-signed certificate: {e}"))?;
 
     let cert_pem = cert
         .serialize_pem()
-        .map_err(|e| anyhow::anyhow!("Failed to serialize certificate: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to serialize certificate: {e}"))?;
     let key_pem = cert.serialize_private_key_pem();
 
     Ok((cert_pem, key_pem))
