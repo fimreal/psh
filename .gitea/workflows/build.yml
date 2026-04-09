@@ -51,7 +51,7 @@ jobs:
       - name: Install dependencies
         run: |
           apt-get update
-          apt-get install -y pkg-config libssl-dev build-essential
+          apt-get install -y pkg-config libssl-dev build-essential cmake perl git
 
       - name: Setup cross-compilation for ARM64
         if: matrix.target == 'aarch64-unknown-linux-gnu'
@@ -64,6 +64,9 @@ jobs:
       - name: Build for AMD64
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CC: gcc
+          CXX: g++
 
       - name: Build for ARM64
         if: matrix.target == 'aarch64-unknown-linux-gnu'
@@ -207,6 +210,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-and-test, docker-manifest]
     if: startsWith(gitea.ref, 'refs/tags/v')
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -237,7 +242,7 @@ jobs:
         run: echo "VERSION=${GITEA_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: akkuman/gitea-release-action@v1
         with:
           files: release-files/*
           body: |
@@ -267,4 +272,4 @@ jobs:
           draft: false
           prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
         env:
-          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+          NODE_OPTIONS: --experimental-fetch
