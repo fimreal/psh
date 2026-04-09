@@ -413,7 +413,7 @@ async fn list_hosts_handler(
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to list hosts: {}", e),
+                    error: format!("Failed to list hosts: {e}"),
                 }),
             ))
         }
@@ -542,12 +542,12 @@ async fn handle_terminal_socket(
 
                                                                 if let Err(e) = session.request_pty("xterm-256color", 80, 24).await {
                                                                     error!("Failed to request PTY: {}", e);
-                                                                    send_error(&mut socket, &format!("Failed to request PTY: {}", e)).await;
+                                                                    send_error(&mut socket, &format!("Failed to request PTY: {e}")).await;
                                                                     continue;
                                                                 }
                                                                 if let Err(e) = session.start_shell().await {
                                                                     error!("Failed to start shell: {}", e);
-                                                                    send_error(&mut socket, &format!("Failed to start shell: {}", e)).await;
+                                                                    send_error(&mut socket, &format!("Failed to start shell: {e}")).await;
                                                                     continue;
                                                                 }
 
@@ -576,7 +576,7 @@ async fn handle_terminal_socket(
                                                             }
                                                             Err(e) => {
                                                                 error!("Failed to connect to {}: {}", h, e);
-                                                                send_error(&mut socket, &format!("Connection failed: {}", e)).await;
+                                                                send_error(&mut socket, &format!("Connection failed: {e}")).await;
                                                             }
                                                         }
                                                     }
