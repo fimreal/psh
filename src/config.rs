@@ -28,11 +28,21 @@ pub struct Args {
     pub port: u16,
 
     /// Path to SSH config file
-    #[arg(short = 's', long, env = "PSH_SSH_CONFIG", default_value = "~/.ssh/config")]
+    #[arg(
+        short = 's',
+        long,
+        env = "PSH_SSH_CONFIG",
+        default_value = "~/.ssh/config"
+    )]
     pub ssh_config: PathBuf,
 
     /// Path to audit log file
-    #[arg(short = 'a', long, env = "PSH_AUDIT_LOG", default_value = "~/.local/share/psh/audit.jsonl")]
+    #[arg(
+        short = 'a',
+        long,
+        env = "PSH_AUDIT_LOG",
+        default_value = "~/.local/share/psh/audit.jsonl"
+    )]
     pub audit_log: PathBuf,
 
     /// Path to TLS certificate file
