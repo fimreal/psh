@@ -53,6 +53,11 @@ jobs:
           apt-get update
           apt-get install -y pkg-config libssl-dev build-essential cmake perl git
 
+      - name: Setup cross-compilation for AMD64
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          apt-get install -y gcc-x86-64-linux-gnu g++-x86-64-linux-gnu
+
       - name: Setup cross-compilation for ARM64
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
@@ -65,16 +70,19 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: cargo build --release --target ${{ matrix.target }}
         env:
-          CC: gcc
-          CXX: g++
+          CC_x86_64_unknown_linux_gnu: x86_64-linux-gnu-gcc
+          CXX_x86_64_unknown_linux_gnu: x86_64-linux-gnu-g++
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: x86_64-linux-gnu-gcc
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig
 
       - name: Build for ARM64
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: cargo build --release --target ${{ matrix.target }}
         env:
-          CC: aarch64-linux-gnu-gcc
-          CXX: aarch64-linux-gnu-g++
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
 
       - name: Run tests (native only)
         if: matrix.target == 'x86_64-unknown-linux-gnu'
