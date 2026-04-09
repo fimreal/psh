@@ -51,6 +51,9 @@ time = "0.3"
 # Environment variables
 envy = "0.4"
 
+# Command line arguments
+clap = { version = "4", features = ["derive", "env"] }
+
 # Error handling
 anyhow = "1.0"
 thiserror = "1.0"
@@ -69,6 +72,9 @@ hex = "0.4"
 
 # URL encoding
 urlencoding = "2.1"
+
+# Home directory
+dirs = "5"
 
 # Async trait
 async-trait = "0.1"

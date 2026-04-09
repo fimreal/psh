@@ -55,7 +55,10 @@ struct HostInfo {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing
+    // Load configuration first (before logging) so --help works cleanly
+    let config = Arc::new(Config::from_args()?);
+
+    // Initialize tracing after args are parsed
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
@@ -66,9 +69,6 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     info!("Starting psh (proxy shell) - WebSSH server");
-
-    // Load configuration
-    let config = Arc::new(Config::from_env()?);
     info!(
         "Configuration loaded: host={}, port={}",
         config.host, config.port
@@ -76,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Initialize auth service
     if config.password.is_empty() {
-        anyhow::bail!("PSH_PASSWORD environment variable is required");
+        anyhow::bail!("Password is required (use -P/--password or PSH_PASSWORD env)");
     }
     let auth = Arc::new(AuthService::new(
         config.jwt_secret.clone(),
@@ -204,16 +204,21 @@ async fn main() -> anyhow::Result<()> {
 // Auth middleware
 async fn auth_middleware(
     State(state): State<AppState>,
+    cookies: axum_extra::extract::CookieJar,
     req: Request<Body>,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    // Check for token in Authorization header or query params
-    let token = req
-        .headers()
-        .get("Authorization")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| h.strip_prefix("Bearer "))
-        .map(|s| s.to_string())
+    // Check for token in cookie first (preferred), then Authorization header or query params
+    let token = cookies
+        .get("psh_token")
+        .map(|c| c.value().to_string())
+        .or_else(|| {
+            req.headers()
+                .get("Authorization")
+                .and_then(|h| h.to_str().ok())
+                .and_then(|h| h.strip_prefix("Bearer "))
+                .map(|s| s.to_string())
+        })
         .or_else(|| {
             req.uri().query().and_then(|q| {
                 parse_query_string(q).find_map(|(k, v)| {
@@ -518,9 +523,11 @@ async fn handle_terminal_socket(
                     Some(Ok(msg)) => {
                         match msg {
                             Message::Text(text) => {
+                                debug!("Received WebSocket text message: {}", text);
                                 match serde_json::from_str::<serde_json::Value>(&text) {
                                     Ok(json) => {
                                         let msg_type = json.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                                        debug!("Message type: {}", msg_type);
 
                                         match msg_type {
                                             "connect" => {
@@ -589,8 +596,16 @@ async fn handle_terminal_socket(
                                             "input" => {
                                                 if let Some(ref mut session) = ssh_session {
                                                     if let Some(data) = json.get("data").and_then(|d| d.as_str()) {
-                                                        if let Err(e) = session.write(data.as_bytes()).await {
-                                                            error!("Failed to write to SSH session: {e}");
+                                                        // Decode base64 input
+                                                        match base64_engine::decode(data) {
+                                                            Ok(decoded) => {
+                                                                if let Err(e) = session.write(&decoded).await {
+                                                                    error!("Failed to write to SSH session: {e}");
+                                                                }
+                                                            }
+                                                            Err(e) => {
+                                                                error!("Failed to decode base64 input: {e}");
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -682,11 +697,15 @@ async fn handle_terminal_socket(
     info!("WebSocket session {} ended", session_id);
 }
 
-// Base64 encoder for output
+// Base64 encoder/decoder for output/input
 mod base64_engine {
     use base64::{engine::general_purpose::STANDARD, Engine};
 
     pub fn encode(data: &[u8]) -> String {
         STANDARD.encode(data)
+    }
+
+    pub fn decode(data: &str) -> Result<Vec<u8>, base64::DecodeError> {
+        STANDARD.decode(data)
     }
 }

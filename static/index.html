@@ -4,23 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>psh - WebSSH Proxy</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+    <link rel="stylesheet" href="/static/xterm/xterm.css" />
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #1e1e1e;
             color: #d4d4d4;
             height: 100vh;
             display: flex;
             flex-direction: column;
         }
-
         .header {
             background: #252526;
             border-bottom: 1px solid #3e3e42;
@@ -29,20 +23,8 @@
             align-items: center;
             gap: 10px;
         }
-
-        .logo {
-            font-size: 18px;
-            font-weight: bold;
-            color: #007acc;
-        }
-
-        .tab-bar {
-            display: flex;
-            gap: 2px;
-            flex: 1;
-            margin-left: 20px;
-        }
-
+        .logo { font-size: 18px; font-weight: bold; color: #007acc; }
+        .tab-bar { display: flex; gap: 2px; flex: 1; margin-left: 20px; }
         .tab {
             background: #2d2d30;
             border: 1px solid #3e3e42;
@@ -56,97 +38,21 @@
             max-width: 200px;
             border-radius: 4px 4px 0 0;
         }
-
-        .tab.active {
-            background: #1e1e1e;
-            border-bottom: 2px solid #007acc;
-        }
-
-        .tab:hover:not(.active) {
-            background: #3e3e42;
-        }
-
-        .tab-title {
-            flex: 1;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            font-size: 13px;
-        }
-
-        .tab-close {
-            width: 18px;
-            height: 18px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 3px;
-            font-size: 14px;
-            color: #888;
-        }
-
-        .tab-close:hover {
-            background: #c75450;
-            color: white;
-        }
-
-        .add-tab {
-            background: #2d2d30;
-            border: 1px solid #3e3e42;
-            padding: 8px 12px;
-            cursor: pointer;
-            font-size: 16px;
-            border-radius: 4px;
-            color: #d4d4d4;
-        }
-
-        .add-tab:hover {
-            background: #3e3e42;
-        }
-
-        .content {
-            flex: 1;
-            display: flex;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .terminal-container {
-            flex: 1;
-            padding: 10px;
-            display: none;
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-        }
-
-        .terminal-container.active {
-            display: block;
-        }
-
-        .terminal {
-            width: 100%;
-            height: 100%;
-        }
-
-        #welcome {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-direction: column;
-            color: #666;
-            font-size: 14px;
-        }
-
-        #welcome h2 {
-            font-size: 24px;
-            margin-bottom: 10px;
-            color: #888;
-        }
-
-        .connection-dialog, .login-dialog {
+        .tab.active { background: #1e1e1e; border-bottom: 2px solid #007acc; }
+        .tab:hover:not(.active) { background: #3e3e42; }
+        .tab-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+        .tab-close { width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; border-radius: 3px; font-size: 14px; color: #888; }
+        .tab-close:hover { background: #c75450; color: white; }
+        .add-tab { background: #2d2d30; border: 1px solid #3e3e42; padding: 8px 12px; cursor: pointer; font-size: 16px; border-radius: 4px; color: #d4d4d4; }
+        .add-tab:hover { background: #3e3e42; }
+        .content { flex: 1; display: flex; position: relative; overflow: hidden; }
+        .terminal-container { flex: 1; padding: 10px; display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; overflow: auto; }
+        .terminal-container .xterm { height: 100%; }
+        .terminal-container .xterm-viewport { overflow-y: auto !important; -webkit-overflow-scrolling: touch; }
+        .terminal-container.active { display: block; }
+        #welcome { display: flex; align-items: center; justify-content: center; flex-direction: column; color: #666; font-size: 14px; }
+        #welcome h2 { font-size: 24px; margin-bottom: 10px; color: #888; }
+        .dialog {
             position: fixed;
             top: 50%;
             left: 50%;
@@ -159,24 +65,9 @@
             box-shadow: 0 10px 30px rgba(0,0,0,0.5);
             z-index: 1001;
         }
-
-        .dialog-title {
-            font-size: 18px;
-            margin-bottom: 20px;
-            color: #ffffff;
-        }
-
-        .form-group {
-            margin-bottom: 15px;
-        }
-
-        .form-label {
-            display: block;
-            margin-bottom: 5px;
-            font-size: 13px;
-            color: #cccccc;
-        }
-
+        .dialog-title { font-size: 18px; margin-bottom: 20px; color: #ffffff; }
+        .form-group { margin-bottom: 15px; }
+        .form-label { display: block; margin-bottom: 5px; font-size: 13px; color: #cccccc; }
         .form-input {
             width: 100%;
             padding: 8px 12px;
@@ -186,156 +77,32 @@
             font-size: 14px;
             border-radius: 4px;
         }
-
-        .form-input:focus {
-            outline: none;
-            border-color: #007acc;
-        }
-
-        .button-group {
-            display: flex;
-            gap: 10px;
-            margin-top: 20px;
-        }
-
-        .btn {
-            padding: 8px 16px;
-            border: none;
-            cursor: pointer;
-            font-size: 14px;
-            border-radius: 4px;
-        }
-
-        .btn-primary {
-            background: #007acc;
-            color: white;
-        }
-
-        .btn-primary:hover {
-            background: #005a9e;
-        }
-
-        .btn-secondary {
-            background: #3c3c3c;
-            color: #d4d4d4;
-            border: 1px solid #3e3e42;
-        }
-
-        .btn-secondary:hover {
-            background: #4c4c4c;
-        }
-
-        .overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.7);
-            display: none;
-            z-index: 1000;
-        }
-
-        .overlay.active {
-            display: block;
-        }
-
-        .status-bar {
-            background: #007acc;
-            color: white;
-            padding: 5px 20px;
-            font-size: 12px;
-            display: flex;
-            justify-content: space-between;
-        }
-
-        .hidden {
-            display: none !important;
-        }
-
-        .error-msg {
-            color: #f14c4c;
-            font-size: 13px;
-            margin-top: 10px;
-        }
-
-        select.form-input {
-            cursor: pointer;
-        }
-
-        select.form-input option {
-            background: #3c3c3c;
-        }
-
-        /* Scrollbar styling */
-        ::-webkit-scrollbar {
-            width: 10px;
-            height: 10px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: #1e1e1e;
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: #424242;
-            border-radius: 5px;
-        }
-
-        ::-webkit-scrollbar-thumb:hover {
-            background: #4a4a4a;
-        }
-
-        /* Global notification styling */
-        .global-notification {
-            position: fixed;
-            top: 60px;
-            right: 20px;
-            background: #c75450;
-            color: white;
-            padding: 15px 20px;
-            border-radius: 6px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-            z-index: 2000;
-            max-width: 400px;
-            animation: slideIn 0.3s ease;
-        }
-
-        .notification-title {
-            font-weight: bold;
-            margin-bottom: 5px;
-        }
-
-        .notification-message {
-            font-size: 13px;
-        }
-
-        @keyframes slideIn {
-            from {
-                transform: translateX(100%);
-                opacity: 0;
-            }
-            to {
-                transform: translateX(0);
-                opacity: 1;
-            }
-        }
+        .form-input:focus { outline: none; border-color: #007acc; }
+        .button-group { display: flex; gap: 10px; margin-top: 20px; }
+        .btn { padding: 8px 16px; border: none; cursor: pointer; font-size: 14px; border-radius: 4px; }
+        .btn-primary { background: #007acc; color: white; }
+        .btn-primary:hover { background: #005a9e; }
+        .btn-secondary { background: #3c3c3c; color: #d4d4d4; border: 1px solid #3e3e42; }
+        .btn-secondary:hover { background: #4c4c4c; }
+        .overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.7); display: none; z-index: 1000; }
+        .overlay.active { display: block; }
+        .status-bar { background: #007acc; color: white; padding: 5px 20px; font-size: 12px; display: flex; justify-content: space-between; }
+        .hidden { display: none !important; }
+        .error-msg { color: #f14c4c; font-size: 13px; margin-top: 10px; }
     </style>
 </head>
 <body>
     <div class="header">
         <div class="logo">psh</div>
-        <div class="tab-bar" id="tabBar">
-            <!-- Tabs will be dynamically added here -->
-        </div>
-        <button class="add-tab" id="addTabBtn" title="New Connection (Ctrl+T)">+</button>
+        <div class="tab-bar" id="tabBar"></div>
+        <button class="add-tab" id="addTabBtn" title="New Connection">+</button>
     </div>
 
     <div class="content" id="content">
         <div class="terminal-container active" id="welcome">
             <div>
                 <h2>Welcome to psh</h2>
-                <p>Click + or press Ctrl+T to start a new SSH connection</p>
+                <p>Click + to start a new SSH connection</p>
             </div>
         </div>
     </div>
@@ -346,18 +113,18 @@
     </div>
 
     <div class="overlay" id="overlay"></div>
-    
-    <div class="connection-dialog hidden" id="connectionDialog">
+
+    <div class="dialog hidden" id="connectionDialog">
         <div class="dialog-title">New SSH Connection</div>
         <div class="form-group">
-            <label class="form-label">Host (from ~/.ssh/config)</label>
+            <label class="form-label">Host [user@]hostname[:port]</label>
+            <input type="text" class="form-input" id="hostInput" placeholder="user@192.168.1.1:22">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Or select from ~/.ssh/config</label>
             <select class="form-input" id="hostSelect">
                 <option value="">-- Select host --</option>
             </select>
-        </div>
-        <div class="form-group">
-            <label class="form-label">Or enter manually: [user@]hostname[:port]</label>
-            <input type="text" class="form-input" id="manualHost" placeholder="user@example.com:22">
         </div>
         <div class="button-group">
             <button class="btn btn-primary" id="connectBtn">Connect</button>
@@ -365,6 +132,256 @@
         </div>
     </div>
 
-    <script type="module" src="/static/app.js"></script>
+    <div class="dialog hidden" id="loginDialog">
+        <div class="dialog-title">Login to psh</div>
+        <div class="form-group">
+            <label class="form-label">Password</label>
+            <input type="password" class="form-input" id="loginPassword" placeholder="Enter password">
+        </div>
+        <div class="button-group">
+            <button class="btn btn-primary" id="loginBtn">Login</button>
+        </div>
+        <div class="error-msg hidden" id="loginError"></div>
+    </div>
+
+    <script type="module">
+        import { Terminal } from '/static/xterm/xterm.esm.js';
+        import { FitAddon } from '/static/xterm/xterm-addon-fit.esm.js';
+
+        const $ = id => document.getElementById(id);
+
+        const sessions = new Map();
+        let activeSessionId = null;
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        async function init() {
+            $('addTabBtn').onclick = showConnectionDialog;
+            $('cancelBtn').onclick = hideConnectionDialog;
+            $('overlay').onclick = hideConnectionDialog;
+            $('connectBtn').onclick = handleConnect;
+            $('loginBtn').onclick = handleLogin;
+            $('loginPassword').onkeypress = e => { if (e.key === 'Enter') handleLogin(); };
+
+            const res = await fetch('/api/hosts', { credentials: 'include' });
+            if (res.ok) {
+                const hosts = await res.json();
+                const select = $('hostSelect');
+                hosts.forEach(h => {
+                    const opt = document.createElement('option');
+                    opt.value = h.name;
+                    opt.textContent = `${h.name} (${h.user || 'user'}@${h.hostname}:${h.port})`;
+                    select.appendChild(opt);
+                });
+            } else {
+                // Clear invalid cookie and show login
+                document.cookie = 'psh_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+                $('loginDialog').classList.remove('hidden');
+                $('overlay').classList.add('active');
+            }
+        }
+
+        async function handleLogin() {
+            const password = $('loginPassword').value;
+            const res = await fetch('/api/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ password })
+            });
+            if (res.ok) {
+                $('loginDialog').classList.add('hidden');
+                $('overlay').classList.remove('active');
+                init();
+            } else {
+                $('loginError').textContent = 'Invalid password';
+                $('loginError').classList.remove('hidden');
+            }
+        }
+
+        function showConnectionDialog() {
+            $('overlay').classList.add('active');
+            $('connectionDialog').classList.remove('hidden');
+            $('hostInput').focus();
+        }
+
+        function hideConnectionDialog() {
+            $('overlay').classList.remove('active');
+            $('connectionDialog').classList.add('hidden');
+        }
+
+        function handleConnect() {
+            let host = $('hostInput').value.trim();
+            let user = null;
+            let port = null;
+
+            if (!host) {
+                host = $('hostSelect').value;
+            }
+
+            if (!host) {
+                alert('Please enter or select a host');
+                return;
+            }
+
+            // Parse user@host:port
+            if (host.includes('@')) {
+                const parts = host.split('@');
+                user = parts[0];
+                host = parts[1];
+            }
+            if (host.includes(':')) {
+                const parts = host.split(':');
+                host = parts[0];
+                port = parseInt(parts[1], 10);
+            }
+
+            hideConnectionDialog();
+            createSession(host, user, port);
+        }
+
+        function createSession(host, user, port) {
+            const id = 's' + Date.now();
+
+            // Create tab
+            const tab = document.createElement('div');
+            tab.className = 'tab';
+            tab.id = 'tab-' + id;
+            tab.innerHTML = `<span class="tab-title">${escapeHtml(host)}</span><span class="tab-close">×</span>`;
+            tab.onclick = e => {
+                if (e.target.classList.contains('tab-close')) closeSession(id);
+                else switchSession(id);
+            };
+            $('tabBar').appendChild(tab);
+
+            // Create terminal
+            const container = document.createElement('div');
+            container.className = 'terminal-container';
+            container.id = 'container-' + id;
+            $('content').appendChild(container);
+
+            $('welcome').classList.remove('active');
+
+            const term = new Terminal({
+                theme: {
+                    background: '#1e1e1e',
+                    foreground: '#d4d4d4',
+                    cursor: '#ffffff'
+                },
+                fontFamily: 'Menlo, Monaco, monospace',
+                fontSize: 14,
+                cursorBlink: true,
+                scrollback: 10000
+            });
+
+            const fitAddon = new FitAddon();
+            term.loadAddon(fitAddon);
+            term.open(container);
+            fitAddon.fit();
+
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const ws = new WebSocket(`${wsProtocol}//${location.host}/ws/terminal`);
+
+            ws.onopen = () => {
+                term.writeln('\x1b[32mConnecting to ' + host + '...\x1b[0m');
+                ws.send(JSON.stringify({ type: 'connect', host, user, port }));
+            };
+
+            ws.onmessage = e => {
+                try {
+                    const msg = JSON.parse(e.data);
+                    if (msg.type === 'output') {
+                        term.write(atob(msg.data));
+                    } else if (msg.type === 'connected') {
+                        term.writeln('\x1b[32mConnected!\x1b[0m');
+                        $('statusText').textContent = 'Connected';
+                        $('connectionInfo').textContent = (msg.user || 'user') + '@' + msg.host;
+                        // Send initial terminal size
+                        const dims = fitAddon.proposeDimensions();
+                        if (dims) {
+                            ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
+                        }
+                    } else if (msg.type === 'error') {
+                        term.writeln('\x1b[31mError: ' + msg.message + '\x1b[0m');
+                    }
+                } catch (err) {
+                    term.write(e.data);
+                }
+            };
+
+            ws.onclose = () => {
+                term.writeln('\x1b[33mConnection closed.\x1b[0m');
+                $('statusText').textContent = 'Disconnected';
+            };
+
+            ws.onerror = () => term.writeln('\x1b[31mWebSocket error\x1b[0m');
+
+            term.onData(data => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'input', data: btoa(data) }));
+                }
+            });
+
+            // Handle resize
+            const resizeObserver = new ResizeObserver(() => {
+                fitAddon.fit();
+                const dims = fitAddon.proposeDimensions();
+                if (ws.readyState === WebSocket.OPEN && dims) {
+                    ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
+                }
+            });
+            resizeObserver.observe(container);
+
+            sessions.set(id, { ws, term, fitAddon, container, tab, host, resizeObserver });
+            switchSession(id);
+        }
+
+        function switchSession(id) {
+            const s = sessions.get(id);
+            if (!s) return;
+
+            if (activeSessionId) {
+                const cur = sessions.get(activeSessionId);
+                if (cur) {
+                    cur.tab.classList.remove('active');
+                    cur.container.classList.remove('active');
+                }
+            }
+
+            s.tab.classList.add('active');
+            s.container.classList.add('active');
+            activeSessionId = id;
+            s.term.focus();
+            s.fitAddon.fit();
+        }
+
+        function closeSession(id) {
+            const s = sessions.get(id);
+            if (!s) return;
+            s.ws.close();
+            s.term.dispose();
+            if (s.resizeObserver) s.resizeObserver.disconnect();
+            s.tab.remove();
+            s.container.remove();
+            sessions.delete(id);
+
+            if (activeSessionId === id) {
+                const next = sessions.keys().next().value;
+                if (next) switchSession(next);
+                else {
+                    activeSessionId = null;
+                    $('welcome').classList.add('active');
+                    $('statusText').textContent = 'Ready';
+                    $('connectionInfo').textContent = '';
+                }
+            }
+        }
+
+        init();
+    </script>
 </body>
 </html>

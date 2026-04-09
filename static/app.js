@@ -1,8 +1,8 @@
 // psh - WebSSH Proxy Frontend
 // Main application entry point
 
-import { Terminal } from 'https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.mjs';
-import { FitAddon } from 'https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.mjs';
+import { Terminal } from '/static/xterm/xterm.esm.js';
+import { FitAddon } from '/static/xterm/xterm-addon-fit.esm.js';
 
 // HTML escape function to prevent XSS attacks
 function escapeHtml(text) {
@@ -13,9 +13,34 @@ function escapeHtml(text) {
 
 // Input validation functions
 function validateHost(host) {
-    // Allow letters, numbers, dots, hyphens, underscores
+    // Allow letters, numbers, dots, hyphens, underscores, and IP addresses
     if (!host || host.length > 255) return false;
     return /^[a-zA-Z0-9._-]+$/.test(host);
+}
+
+function parseConnection(input) {
+    let user = null;
+    let host = null;
+    let port = null;
+
+    // Parse user@host:port
+    const parts = input.split('@');
+    if (parts.length === 2) {
+        user = parts[0];
+        const hostParts = parts[1].split(':');
+        host = hostParts[0];
+        if (hostParts.length === 2) {
+            port = parseInt(hostParts[1], 10);
+        }
+    } else {
+        const hostParts = input.split(':');
+        host = hostParts[0];
+        if (hostParts.length === 2) {
+            port = parseInt(hostParts[1], 10);
+        }
+    }
+
+    return { user, host, port };
 }
 
 function validatePort(port) {
@@ -28,87 +53,6 @@ function validateUser(user) {
     if (!user) return true;  // Optional
     // Allow letters, numbers, underscores, hyphens
     return /^[a-zA-Z0-9_-]+$/.test(user);
-}
-
-// Resilient WebSocket with automatic reconnection
-class ResilientWebSocket {
-    constructor(url, options = {}) {
-        this.url = url;
-        this.maxRetries = options.maxRetries || 5;
-        this.baseDelay = options.baseDelay || 1000;  // 1 second
-        this.maxDelay = options.maxDelay || 30000;   // 30 seconds
-        this.retries = 0;
-        this.shouldReconnect = true;
-        this.ws = null;
-        this.handlers = {};
-
-        this.connect();
-    }
-
-    connect() {
-        this.ws = new WebSocket(this.url);
-
-        this.ws.onopen = (event) => {
-            this.retries = 0;
-            if (this.handlers.onopen) {
-                this.handlers.onopen(event);
-            }
-        };
-
-        this.ws.onmessage = (event) => {
-            if (this.handlers.onmessage) {
-                this.handlers.onmessage(event);
-            }
-        };
-
-        this.ws.onclose = (event) => {
-            if (this.handlers.onclose) {
-                this.handlers.onclose(event);
-            }
-            this.reconnect();
-        };
-
-        this.ws.onerror = (error) => {
-            if (this.handlers.onerror) {
-                this.handlers.onerror(error);
-            }
-        };
-    }
-
-    reconnect() {
-        if (!this.shouldReconnect || this.retries >= this.maxRetries) {
-            return;
-        }
-
-        this.retries++;
-        const delay = Math.min(
-            this.baseDelay * Math.pow(2, this.retries - 1),
-            this.maxDelay
-        );
-
-        setTimeout(() => this.connect(), delay);
-    }
-
-    send(data) {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            this.ws.send(data);
-        }
-    }
-
-    close() {
-        this.shouldReconnect = false;
-        if (this.ws) {
-            this.ws.close();
-        }
-    }
-
-    get readyState() {
-        return this.ws ? this.ws.readyState : WebSocket.CLOSED;
-    }
-
-    on(event, handler) {
-        this.handlers[event] = handler;
-    }
 }
 
 // Application state
@@ -127,7 +71,7 @@ class PshApp {
         this.overlay = document.getElementById('overlay');
         this.connectionDialog = document.getElementById('connectionDialog');
         this.hostSelect = document.getElementById('hostSelect');
-        this.manualHost = document.getElementById('manualHost');
+        this.hostInput = document.getElementById('hostInput');
 
         // Bind event handlers
         this.init();
@@ -148,22 +92,17 @@ class PshApp {
         document.getElementById('connectBtn').addEventListener('click', () => this.handleConnect());
         document.getElementById('cancelBtn').addEventListener('click', () => this.hideConnectionDialog());
         this.overlay.addEventListener('click', () => this.hideConnectionDialog());
-        
+
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => this.onKeyDown(e));
         window.addEventListener('resize', () => this.onResize());
-        
-        // Check if logged in
-        if (!this.token) {
-            this.showLoginDialog();
+
+        // Token is stored in HttpOnly cookie, validate it via API call
+        const valid = await this.validateToken();
+        if (valid) {
+            await this.loadHosts();
         } else {
-            // Validate token
-            const valid = await this.validateToken();
-            if (!valid) {
-                this.showLoginDialog();
-            } else {
-                await this.loadHosts();
-            }
+            this.showLoginDialog();
         }
     }
     
@@ -262,60 +201,35 @@ class PshApp {
     showConnectionDialog() {
         this.overlay.classList.add('active');
         this.connectionDialog.classList.remove('hidden');
-        this.hostSelect.focus();
+        this.hostInput.focus();
     }
-    
+
     hideConnectionDialog() {
         this.overlay.classList.remove('active');
         this.connectionDialog.classList.add('hidden');
+        this.hostInput.value = '';
+        this.hostSelect.value = '';
     }
-    
+
     async handleConnect() {
-        let host = this.hostSelect.value;
+        let host = null;
         let user = null;
         let port = null;
 
-        if (!host) {
-            // Try manual input
-            const manual = this.manualHost.value.trim();
-            if (!manual) {
-                this.showError('Please select a host or enter manual connection');
-                return;
-            }
-
-            // Parse user@host:port
-            const parts = manual.split('@');
-            if (parts.length === 2) {
-                user = parts[0];
-                if (!validateUser(user)) {
-                    this.showError('Invalid username format');
-                    return;
-                }
-                const hostParts = parts[1].split(':');
-                host = hostParts[0];
-                if (hostParts.length === 2) {
-                    port = parseInt(hostParts[1], 10);
-                    if (!validatePort(port)) {
-                        this.showError('Invalid port number (must be 1-65535)');
-                        return;
-                    }
-                }
-            } else {
-                const hostParts = manual.split(':');
-                host = hostParts[0];
-                if (hostParts.length === 2) {
-                    port = parseInt(hostParts[1], 10);
-                    if (!validatePort(port)) {
-                        this.showError('Invalid port number (must be 1-65535)');
-                        return;
-                    }
-                }
-            }
+        // Try manual input first
+        const manual = this.hostInput.value.trim();
+        if (manual) {
+            const parsed = parseConnection(manual);
+            host = parsed.host;
+            user = parsed.user;
+            port = parsed.port;
+        } else {
+            // Try select
+            host = this.hostSelect.value || null;
         }
 
-        // Validate host
-        if (!validateHost(host)) {
-            this.showError('Invalid hostname format');
+        if (!host) {
+            this.showError('Please enter a host or select from list');
             return;
         }
 
@@ -390,18 +304,14 @@ class PshApp {
         term.open(container);
         fitAddon.fit();
         
-        // Build WebSocket URL (token now sent via cookie)
+        // Build WebSocket URL (token sent via cookie)
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${wsProtocol}//${window.location.host}/ws/terminal`;
 
-        // Use ResilientWebSocket for automatic reconnection
-        const ws = new ResilientWebSocket(wsUrl, {
-            maxRetries: 5,
-            baseDelay: 1000,
-            maxDelay: 30000
-        });
+        // Use native WebSocket
+        const ws = new WebSocket(wsUrl);
 
-        ws.on('open', () => {
+        ws.onopen = () => {
             term.writeln('\x1b[32mConnecting to ' + escapeHtml(host) + '...\x1b[0m');
 
             // Send connection request
@@ -412,9 +322,9 @@ class PshApp {
                 port: port
             };
             ws.send(JSON.stringify(connectMsg));
-        });
+        };
 
-        ws.on('message', (event) => {
+        ws.onmessage = (event) => {
             try {
                 const msg = JSON.parse(event.data);
 
@@ -442,22 +352,22 @@ class PshApp {
                 // Plain text output
                 term.write(event.data);
             }
-        });
+        };
 
-        ws.on('close', () => {
+        ws.onclose = () => {
             term.writeln('');
-            term.writeln('\x1b[33mConnection closed. Reconnecting...\x1b[0m');
-            this.updateStatus('Reconnecting', escapeHtml(host));
+            term.writeln('\x1b[33mConnection closed.\x1b[0m');
+            this.updateStatus('Disconnected', escapeHtml(host));
             const session = this.sessions.get(sessionId);
             if (session) {
                 session.connected = false;
             }
-        });
+        };
 
-        ws.on('error', (error) => {
+        ws.onerror = (error) => {
             term.writeln('\x1b[31mWebSocket error\x1b[0m');
             console.error('WebSocket error:', error);
-        });
+        };
         
         // Handle terminal input
         term.onData((data) => {
