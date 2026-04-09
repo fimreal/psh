@@ -150,14 +150,14 @@ impl SshManager {
                 let port = port.unwrap_or(config.port);
                 let username = user
                     .or(config.user.as_deref())
-                    .ok_or_else(|| anyhow::anyhow!("No user specified for host '{}'", host))?;
+                    .ok_or_else(|| anyhow::anyhow!("No user specified for host '{host}'"))?;
                 (hostname, port, username.to_string(), config.identity_file)
             }
             None => {
                 let hostname = host.to_string();
                 let port = port.unwrap_or(22);
                 let username =
-                    user.ok_or_else(|| anyhow::anyhow!("No user specified for host '{}'", host))?;
+                    user.ok_or_else(|| anyhow::anyhow!("No user specified for host '{host}'"))?;
                 (hostname, port, username.to_string(), None)
             }
         };
@@ -186,7 +186,7 @@ impl russh::client::Handler for ClientHandler {
         server_public_key: &key::PublicKey,
     ) -> Result<bool, Self::Error> {
         let home = std::env::var("HOME").unwrap_or_default();
-        let known_hosts_path = format!("{}/.ssh/known_hosts", home);
+        let known_hosts_path = format!("{home}/.ssh/known_hosts");
 
         if let Ok(known_hosts) = std::fs::read_to_string(&known_hosts_path) {
             for line in known_hosts.lines() {
@@ -237,15 +237,14 @@ impl SshSession {
                 .await?;
             if !auth_res {
                 return Err(anyhow::anyhow!(
-                    "Public key authentication failed for {}",
-                    host
+                    "Public key authentication failed for {host}"
                 ));
             }
         } else {
             let home = std::env::var("HOME").unwrap_or_default();
             let default_keys = [
-                format!("{}/.ssh/id_ed25519", home),
-                format!("{}/.ssh/id_rsa", home),
+                format!("{home}/.ssh/id_ed25519"),
+                format!("{home}/.ssh/id_rsa"),
             ];
 
             let mut authenticated = false;
@@ -275,8 +274,7 @@ impl SshSession {
 
             if !authenticated {
                 return Err(anyhow::anyhow!(
-                    "No valid SSH key found for {}. Password authentication not supported.",
-                    host
+                    "No valid SSH key found for {host}. Password authentication not supported."
                 ));
             }
         }
@@ -420,5 +418,5 @@ fn load_secret_key(path: &PathBuf, passphrase: Option<&str>) -> Result<key::KeyP
     } else {
         russh_keys::decode_secret_key(&content, None)
     }
-    .map_err(|e| anyhow::anyhow!("Failed to decode secret key: {:?}", e))
+    .map_err(|e| anyhow::anyhow!("Failed to decode secret key: {e:?}"))
 }
