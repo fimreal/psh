@@ -23,6 +23,7 @@ use config::Config;
 use ssh::SshManager;
 
 #[derive(Clone)]
+#[allow(dead_code)]
 struct AppState {
     config: Arc<Config>,
     ssh_manager: Arc<SshManager>,
