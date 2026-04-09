@@ -56,12 +56,15 @@ jobs:
       - name: Setup cross-compilation for AMD64
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
-          apt-get install -y gcc-x86-64-linux-gnu g++-x86-64-linux-gnu
+          apt-get install -y gcc-x86-64-linux-gnu g++-x86-64-linux-gnu binutils-x86-64-linux-gnu
+          ln -sf /usr/bin/x86_64-linux-gnu-gcc /usr/local/bin/gcc
+          ln -sf /usr/bin/x86_64-linux-gnu-g++ /usr/local/bin/g++
+          ln -sf /usr/bin/x86_64-linux-gnu-ar /usr/local/bin/ar
 
       - name: Setup cross-compilation for ARM64
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
-          apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
       - name: Add Rust target
         run: rustup target add ${{ matrix.target }}
@@ -74,7 +77,8 @@ jobs:
           CXX: x86_64-linux-gnu-g++
           AR: x86_64-linux-gnu-ar
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: x86_64-linux-gnu-gcc
-          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig
+          AWS_LC_SYS_CC: x86_64-linux-gnu-gcc
+          AWS_LC_SYS_CXX: x86_64-linux-gnu-g++
 
       - name: Build for ARM64
         if: matrix.target == 'aarch64-unknown-linux-gnu'
@@ -84,7 +88,8 @@ jobs:
           CXX: aarch64-linux-gnu-g++
           AR: aarch64-linux-gnu-ar
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
+          AWS_LC_SYS_CC: aarch64-linux-gnu-gcc
+          AWS_LC_SYS_CXX: aarch64-linux-gnu-g++
 
       - name: Run tests (native only)
         if: matrix.target == 'x86_64-unknown-linux-gnu'
