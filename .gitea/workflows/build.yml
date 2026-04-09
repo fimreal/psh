@@ -156,7 +156,7 @@ jobs:
 
       - name: Extract version
         id: version
-        run: echo "VERSION=${GITEA_REF#refs/tags/}" >> $GITEA_OUTPUT
+        run: echo "VERSION=${GITEA_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -181,7 +181,7 @@ jobs:
 
       - name: Extract version
         id: version
-        run: echo "VERSION=${GITEA_REF#refs/tags/}" >> $GITEA_OUTPUT
+        run: echo "VERSION=${GITEA_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Create and push manifest
         run: |
@@ -234,7 +234,7 @@ jobs:
 
       - name: Extract version
         id: version
-        run: echo "VERSION=${GITEA_REF#refs/tags/}" >> $GITEA_OUTPUT
+        run: echo "VERSION=${GITEA_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
