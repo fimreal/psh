@@ -34,6 +34,8 @@ jobs:
           context: .
           target: export
           outputs: type=local,dest=./binaries
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache,mode=max
 
       - name: Prepare release files
         run: |
@@ -63,6 +65,7 @@ jobs:
           tags: |
             ${{ secrets.DOCKER_USERNAME }}/psh:${{ steps.version.outputs.VERSION }}
             ${{ secrets.DOCKER_USERNAME }}/psh:latest
+          cache-from: type=local,src=/tmp/.buildx-cache
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/v')
