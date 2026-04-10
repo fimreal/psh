@@ -4,7 +4,7 @@
 *.dll
 *.so
 *.dylib
-psh
+/psh
 
 # Go build artifacts
 go.work
