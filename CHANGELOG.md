@@ -34,10 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Audit trail for compliance
 
 ### Technical Details
-- Built with Rust and Axum framework
-- Pure Rust SSH client (russh)
+- Built with Go
+- Pure Go SSH client (golang.org/x/crypto)
 - No external C dependencies
-- Static binary compilation
 - Cross-platform support
 
 [Unreleased]: https://github.com/your-org/psh/compare/v0.1.0...HEAD

@@ -115,12 +115,11 @@ git push origin v1.0.0
 
 ```bash
 # 测试特定平台构建
-cargo build --release --target x86_64-unknown-linux-gnu
-cargo build --release --target aarch64-unknown-linux-gnu
+go build -o psh ./cmd/psh
 
-# 测试交叉编译
-rustup target add aarch64-unknown-linux-gnu
-cargo build --release --target aarch64-unknown-linux-gnu
+# 交叉编译
+GOOS=linux GOARCH=amd64 go build -o psh-linux-amd64 ./cmd/psh
+GOOS=linux GOARCH=arm64 go build -o psh-linux-arm64 ./cmd/psh
 ```
 
 ### 测试 Docker 构建
@@ -153,9 +152,8 @@ docker run -d \
    - 确认 Docker Hub 仓库存在或有创建权限
    - 检查 Access Token 权限
 
-3. **Cargo 依赖下载慢**
-   - 工作流已配置 ustc 镜像源
-   - 可以修改 `.cargo/config.toml` 更换镜像源
+3. **Go 模块下载慢**
+   - 工作流已配置 GOPROXY 镜像源
 
 ### 查看日志
 

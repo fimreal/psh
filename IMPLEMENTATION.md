@@ -2,30 +2,30 @@
 
 ## 已完成的功能
 
-### 后端 (Rust)
+### 后端 (Go)
 
-1. **HTTP/HTTPS 服务器** (`main.rs`)
-   - Axum 框架
+1. **HTTP/HTTPS 服务器** (`main.go`)
+   - Go 标准库 net/http
    - REST API 端点
    - WebSocket 支持
    - TLS (自签名证书或自定义证书)
 
-2. **认证模块** (`auth.rs`)
+2. **认证模块** (`auth.go`)
    - JWT token 生成和验证
    - 密码验证
    - 登录 API (/api/auth/login)
 
-3. **配置管理** (`config.rs`)
+3. **配置管理** (`config.go`)
    - 环境变量读取
    - TLS 证书加载
    - 自签名证书自动生成
 
-4. **SSH 管理** (`ssh.rs`)
+4. **SSH 管理** (`ssh.go`)
    - SSH 配置解析 (~/.ssh/config)
    - 密钥认证 (ed25519, rsa)
    - 多主机管理
 
-5. **审计日志** (`audit.rs`)
+5. **审计日志** (`audit.go`)
    - JSONL 格式日志
    - 连接/断开/命令记录
 
@@ -94,7 +94,7 @@
 
 1. **目录结构**: 当前为平面结构，设计文档要求 backend/ 和 frontend/ 子目录 (可在后续迭代中重构)
 
-2. **PTY 调整大小**: russh 库对 PTY 动态调整大小支持有限
+2. **PTY 调整大小**: 部分终端可能不支持动态调整
 
 3. **主机密钥验证**: 当前接受所有主机密钥 (生产环境应实现 known_hosts 验证)
 
@@ -122,7 +122,7 @@ Complete psh WebSSH implementation
 
 - JWT authentication with login API
 - WebSocket terminal with xterm.js
-- SSH connection management via russh
+- SSH connection management via golang.org/x/crypto
 - SSH config parsing (~/.ssh/config)
 - Audit logging (JSONL format)
 - TLS with auto-generated self-signed certs
