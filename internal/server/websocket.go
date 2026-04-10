@@ -24,10 +24,13 @@ var upgrader = websocket.Upgrader{
 }
 
 type WSClient struct {
-	conn      *websocket.Conn
-	session   *shell.Session
-	sessionID string
-	mu        sync.Mutex
+	conn         *websocket.Conn
+	session      *shell.Session
+	sessionID    string
+	host         string
+	commandBuf   []byte
+	mu           sync.Mutex
+	auditLogger  *audit.Logger
 }
 
 // TerminalWSHandler handles WebSocket connections for terminal
@@ -64,17 +67,20 @@ func (h *Handler) TerminalWSHandler(c *gin.Context) {
 	}()
 
 	sessionID := uuid.New().String()
-	log.Infow("New WebSocket session", "session", sessionID, "remote", c.ClientIP())
+	host := c.Query("host")
+	log.Infow("New WebSocket session", "session", sessionID, "host", host, "remote", c.ClientIP())
 
 	client := &WSClient{
-		conn:      conn,
-		sessionID: sessionID,
+		conn:        conn,
+		sessionID:   sessionID,
+		host:        host,
+		auditLogger: h.auditLogger,
 	}
 
-	client.handleMessages(h.auditLogger)
+	client.handleMessages()
 }
 
-func (c *WSClient) handleMessages(auditLogger *audit.Logger) {
+func (c *WSClient) handleMessages() {
 	// Start shell session
 	sess := shell.NewSession()
 	sess.Start()
@@ -87,7 +93,7 @@ func (c *WSClient) handleMessages(auditLogger *audit.Logger) {
 	})
 
 	// Log connection
-	if err := auditLogger.LogConnection(c.sessionID, "webshell", ""); err != nil {
+	if err := c.auditLogger.LogConnection(c.sessionID, c.host, ""); err != nil {
 		log.Warnw("Failed to log connection", "error", err)
 	}
 
@@ -127,7 +133,7 @@ func (c *WSClient) handleMessages(auditLogger *audit.Logger) {
 	if err := c.session.Close(); err != nil {
 		log.Debugw("Failed to close session", "error", err)
 	}
-	if err := auditLogger.LogDisconnection(c.sessionID, "webshell"); err != nil {
+	if err := c.auditLogger.LogDisconnection(c.sessionID, c.host); err != nil {
 		log.Warnw("Failed to log disconnection", "error", err)
 	}
 	log.Infow("WebSocket session ended", "session", c.sessionID)
@@ -144,9 +150,53 @@ func (c *WSClient) handleInput(msg WSMessage) {
 		return
 	}
 
+	// Buffer input and detect commands (Enter key)
+	c.processInput(data)
+
 	if err := c.session.Write(data); err != nil {
 		log.Errorw("Failed to write to shell session", "error", err)
 	}
+}
+
+// processInput buffers input and logs complete commands on Enter
+func (c *WSClient) processInput(data []byte) {
+	for _, b := range data {
+		switch b {
+		case '\r', '\n': // Enter key
+			if len(c.commandBuf) > 0 {
+				cmd := string(c.commandBuf)
+				// Trim leading/trailing whitespace
+				cmd = trimCommand(cmd)
+				if cmd != "" {
+					c.auditLogger.LogCommand(c.sessionID, c.host, cmd)
+				}
+				c.commandBuf = c.commandBuf[:0] // Reset buffer
+			}
+		case 127, 8: // Backspace / Delete
+			if len(c.commandBuf) > 0 {
+				c.commandBuf = c.commandBuf[:len(c.commandBuf)-1]
+			}
+		case 0x03: // Ctrl+C
+			c.commandBuf = c.commandBuf[:0] // Clear buffer
+		default:
+			// Only buffer printable ASCII (ignore control sequences)
+			if b >= 32 && b < 127 {
+				c.commandBuf = append(c.commandBuf, b)
+			}
+		}
+	}
+}
+
+// trimCommand removes leading/trailing whitespace and common prompt artifacts
+func trimCommand(cmd string) string {
+	// Simple trim for now
+	for len(cmd) > 0 && (cmd[0] == ' ' || cmd[0] == '\t') {
+		cmd = cmd[1:]
+	}
+	for len(cmd) > 0 && (cmd[len(cmd)-1] == ' ' || cmd[len(cmd)-1] == '\t') {
+		cmd = cmd[:len(cmd)-1]
+	}
+	return cmd
 }
 
 func (c *WSClient) handleResize(msg WSMessage) {

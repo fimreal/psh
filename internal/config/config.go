@@ -12,6 +12,7 @@ type Config struct {
 	Host              string
 	Port              int
 	AuditLogPath      string
+	AuditLevel        string
 	TLSCertPath       string
 	TLSKeyPath        string
 	AutoGenerateCerts bool
@@ -33,7 +34,8 @@ func Load() (*Config, error) {
 	flags := rootCmd.Flags()
 	flags.StringVarP(&cfg.Host, "host", "H", "0.0.0.0", "Host address to bind to")
 	flags.IntVarP(&cfg.Port, "port", "p", 8443, "Port to listen on")
-	flags.StringVarP(&cfg.AuditLogPath, "audit-log", "a", "/var/log/psh/audit.jsonl", "Path to audit log file")
+	flags.StringVarP(&cfg.AuditLogPath, "audit-log", "a", "-", "Path to audit log file ('-' for stdout, empty to disable)")
+	flags.StringVar(&cfg.AuditLevel, "audit-level", "command", "Audit level: off, connection, command, command-full")
 	flags.StringVar(&cfg.TLSCertPath, "tls-cert", "", "Path to TLS certificate file")
 	flags.StringVar(&cfg.TLSKeyPath, "tls-key", "", "Path to TLS private key file")
 	flags.BoolVar(&cfg.AutoGenerateCerts, "auto-certs", true, "Auto-generate self-signed TLS certificates")
@@ -57,6 +59,9 @@ func Load() (*Config, error) {
 	}
 	if viper.IsSet("AUDIT_LOG") {
 		cfg.AuditLogPath = viper.GetString("AUDIT_LOG")
+	}
+	if viper.IsSet("AUDIT_LEVEL") {
+		cfg.AuditLevel = viper.GetString("AUDIT_LEVEL")
 	}
 	if viper.IsSet("TLS_CERT") {
 		cfg.TLSCertPath = viper.GetString("TLS_CERT")

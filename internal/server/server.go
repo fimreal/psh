@@ -32,11 +32,10 @@ func New(cfg *config.Config) (*Server, error) {
 	log.Info("Auth service initialized")
 
 	// Initialize audit logger
-	auditLogger, err := audit.NewLogger(cfg.AuditLogPath)
+	auditLogger, err := audit.NewLogger(cfg.AuditLogPath, audit.Level(cfg.AuditLevel))
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize audit logger: %w", err)
 	}
-	log.Infow("Audit logger initialized", "path", cfg.AuditLogPath)
 
 	// Create handler
 	handler := NewHandler(authService, auditLogger, cfg.JWTExpire)

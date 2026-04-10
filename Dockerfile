@@ -50,7 +50,6 @@ EXPOSE 8443
 ENV PSH_HOST=0.0.0.0 \
     PSH_PORT=8443 \
     PSH_SSH_CONFIG=/root/.ssh/config \
-    PSH_AUDIT_LOG=/var/log/psh/audit.jsonl \
     PSH_AUTO_CERTS=true
 
 # For scratch image, use K8s livenessProbe instead of HEALTHCHECK

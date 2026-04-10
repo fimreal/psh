@@ -62,12 +62,8 @@ services:
       - "8443:8443"
     volumes:
       - ~/.ssh:/root/.ssh:ro
-      - psh-logs:/var/log/psh
     environment:
       - PSH_PASSWORD=${PSH_PASSWORD}
-
-volumes:
-  psh-logs:
 ```
 
 ```bash
@@ -89,7 +85,8 @@ docker-compose up -d
 | `PSH_JWT_SECRET` | | 自动生成 | JWT 签名密钥（生产环境建议设置） |
 | `PSH_JWT_EXPIRE` | | `86400` | Token 过期时间（秒） |
 | `PSH_SSH_CONFIG` | | `/root/.ssh/config` | SSH 配置文件路径 |
-| `PSH_AUDIT_LOG` | | `/var/log/psh/audit.jsonl` | 审计日志路径 |
+| `PSH_AUDIT_LOG` | | `-` | 审计日志路径（`-` 为 stdout，空则禁用） |
+| `PSH_AUDIT_LEVEL` | | `command` | 审计级别：off, connection, command, command-full |
 | `PSH_TLS_CERT` | | - | TLS 证书路径 |
 | `PSH_TLS_KEY` | | - | TLS 私钥路径 |
 | `PSH_AUTO_CERTS` | | `true` | 自动生成自签名证书 |
@@ -143,12 +140,35 @@ docker run -d \
 
 ### 审计日志
 
+默认输出到 stdout（适合容器环境），可通过环境变量配置：
+
+```bash
+# 输出到 stdout（默认）
+PSH_AUDIT_LOG=- psh
+
+# 输出到文件
+PSH_AUDIT_LOG=/var/log/psh/audit.jsonl psh
+
+# 禁用审计日志
+PSH_AUDIT_LOG= psh
+```
+
+**审计级别** (`PSH_AUDIT_LEVEL`)：
+
+| 级别 | 说明 |
+|------|------|
+| `off` | 禁用审计 |
+| `connection` | 仅记录连接/断开 |
+| `command` | 记录命令名（不含参数，**默认**） |
+| `command-full` | 记录完整命令（可能含敏感信息） |
+
 日志格式：JSONL（每行一个 JSON 对象）
 
 ```json
 {"timestamp":"2024-01-15T10:30:00Z","type":"connection","session_id":"abc123","host":"web-server","user":"admin"}
+{"timestamp":"2024-01-15T10:30:05Z","type":"command","session_id":"abc123","host":"web-server","command":"ls -la"}
+{"timestamp":"2024-01-15T10:30:10Z","type":"command","session_id":"abc123","host":"web-server","command":"cat /etc/passwd"}
 {"timestamp":"2024-01-15T10:35:00Z","type":"disconnection","session_id":"abc123","host":"web-server"}
-{"timestamp":"2024-01-15T10:40:00Z","type":"error","session_id":"def456","host":"db-server","error":"Authentication failed"}
 ```
 
 查看日志：
