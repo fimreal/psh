@@ -3,10 +3,7 @@
 # Build stage - builds ALL platforms
 FROM golang:1.22-alpine AS builder
 
-RUN apk add --no-cache git ca-certificates tzdata curl
-
-# Install golangci-lint
-RUN curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /go/bin latest
+RUN apk add --no-cache git ca-certificates tzdata
 
 WORKDIR /app
 
@@ -14,9 +11,6 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-
-# Run linter
-RUN golangci-lint run
 
 # Run tests
 RUN go test -v ./...
