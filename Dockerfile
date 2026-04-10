@@ -14,7 +14,7 @@ COPY . .
 
 # Build all platforms (linux for docker, darwin for release)
 RUN set -e; \
-    for platform in "linux/amd64" "linux/arm64" "darwin/amd64" "darwin/arm64"; do \
+    for platform in "linux/amd64" "linux/arm64" "darwin/arm64"; do \
       GOOS="${platform%%/*}"; \
       GOARCH="${platform##*/}"; \
       echo "Building for $GOOS/$GOARCH..."; \
