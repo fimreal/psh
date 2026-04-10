@@ -1,13 +1,10 @@
 # psh - WebSSH Proxy
 
 [![Build Status](https://git.epurs.com/gitops/psh/actions/workflows/build.yml/badge.svg?branch=main)](https://git.epurs.com/gitops/psh/actions)
-[![Latest Release](https://git.epurs.com/gitops/psh/releases/latest/badge.svg)](https://git.epurs.com/gitops/psh/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Docker](https://img.shields.io/docker/v/fimreal/psh/latest?label=docker)](https://hub.docker.com/r/fimreal/psh)
 
 > 🚀 浏览器 SSH 跳板机 - 在受限网络中通过 Web 安全连接 SSH 服务器
-
-**简体中文** | [English](#english)
 
 ---
 
@@ -34,20 +31,20 @@ docker run -d \
   -p 8443:8443 \
   -v ~/.ssh:/root/.ssh:ro \
   -e PSH_PASSWORD=your-secure-password \
-  yourusername/psh:latest
+  fimreal/psh:latest
 ```
 
 访问 https://localhost:8443 并使用设置的密码登录。
 
 ### 使用预编译二进制
 
-从 [Releases](https://github.com/your-org/psh/releases) 下载对应平台的二进制文件：
+从 [Releases](https://git.epurs.com/gitops/psh/releases) 下载对应平台的二进制文件：
 
 ```bash
 # Linux/macOS 示例
-wget https://github.com/your-org/psh/releases/latest/download/psh-linux-amd64.tar.gz
-tar -xzf psh-linux-amd64.tar.gz
-sudo mv psh /usr/local/bin/
+wget https://git.epurs.com/gitops/psh/releases/latest/download/psh-linux-amd64
+chmod +x psh-linux-amd64
+sudo mv psh-linux-amd64 /usr/local/bin/psh
 PSH_PASSWORD=your-password psh
 ```
 
@@ -56,10 +53,9 @@ PSH_PASSWORD=your-password psh
 创建 `docker-compose.yml`：
 
 ```yaml
-version: '3.8'
 services:
   psh:
-    image: yourusername/psh:latest
+    image: fimreal/psh:latest
     container_name: psh
     restart: unless-stopped
     ports:
@@ -69,11 +65,6 @@ services:
       - psh-logs:/var/log/psh
     environment:
       - PSH_PASSWORD=${PSH_PASSWORD}
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8443/"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
 
 volumes:
   psh-logs:
@@ -141,13 +132,13 @@ docker run -d \
   --name psh \
   -p 8443:8443 \
   -v ~/.ssh:/root/.ssh:ro \
-  -v /path/to/cert.pem:/etc/ssl/cert.pem:ro \
-  -v /path/to/key.pem:/etc/ssl/key.pem:ro \
+  -v /path/to/cert.pem:/etc/psh/cert.pem:ro \
+  -v /path/to/key.pem:/etc/psh/key.pem:ro \
   -e PSH_PASSWORD=your-password \
-  -e PSH_TLS_CERT=/etc/ssl/cert.pem \
-  -e PSH_TLS_KEY=/etc/ssl/key.pem \
+  -e PSH_TLS_CERT=/etc/psh/cert.pem \
+  -e PSH_TLS_KEY=/etc/psh/key.pem \
   -e PSH_AUTO_CERTS=false \
-  yourusername/psh:latest
+  fimreal/psh:latest
 ```
 
 ### 审计日志
@@ -228,45 +219,21 @@ Content-Type: application/json
 响应：
 ```json
 {
-  "token": "eyJhbGciOiJIUzI1NiIs...",
   "expires_in": 86400
 }
 ```
 
-#### 获取主机列表
-
-```http
-GET /api/hosts
-Authorization: Bearer <token>
-```
-
-响应：
-```json
-[
-  {
-    "name": "web-server",
-    "hostname": "192.168.1.100",
-    "user": "admin",
-    "port": 22
-  }
-]
-```
+Token 会通过 `Set-Cookie` 返回（HttpOnly Cookie）。
 
 ### WebSocket 协议
 
-连接端点：`wss://your-host/ws/terminal?token=<jwt>`
+连接端点：`wss://your-host/ws/terminal`
+
+认证通过 Cookie 中的 `psh_token` 完成。
 
 **客户端 → 服务器**
 
 ```typescript
-// 连接到 SSH 主机
-{
-  "type": "connect",
-  "host": "web-server",
-  "user": "admin",  // 可选
-  "port": 22       // 可选
-}
-
 // 终端输入（base64 编码）
 {
   "type": "input",
@@ -284,14 +251,6 @@ Authorization: Bearer <token>
 **服务器 → 客户端**
 
 ```typescript
-// 连接成功
-{
-  "type": "connected",
-  "session_id": "uuid",
-  "host": "web-server",
-  "user": "admin"
-}
-
 // 终端输出（base64 编码）
 {
   "type": "output",
@@ -403,11 +362,10 @@ Token 默认 24 小时过期，重新登录即可。可在 `PSH_JWT_EXPIRE` 中�
 
 ## 📮 联系方式
 
-- 问题反馈：[GitHub Issues](https://github.com/your-org/psh/issues)
-- 功能建议：[GitHub Discussions](https://github.com/your-org/psh/discussions)
+- 问题反馈：https://git.epurs.com/gitops/psh/issues
 
 ---
 
 <p align="center">
-  Made with ❤️ by the psh team
+  Made with ❤️
 </p>
