@@ -343,6 +343,16 @@ class PshApp {
                             session.connected = true;
                             session.tab.querySelector('.tab-title').textContent = msg.host;
                         }
+                        // Send initial resize after connected
+                        fitAddon.fit();
+                        const dims = fitAddon.proposeDimensions();
+                        if (dims) {
+                            ws.send(JSON.stringify({
+                                type: 'resize',
+                                cols: dims.cols,
+                                rows: dims.rows
+                            }));
+                        }
                         break;
                     case 'error':
                         term.writeln('\x1b[31mError: ' + escapeHtml(msg.message) + '\x1b[0m');
@@ -437,6 +447,16 @@ class PshApp {
         // Focus terminal and fit
         session.term.focus();
         session.fitAddon.fit();
+
+        // Send resize on tab switch
+        const dims = session.fitAddon.proposeDimensions();
+        if (session.ws && session.ws.readyState === WebSocket.OPEN && dims) {
+            session.ws.send(JSON.stringify({
+                type: 'resize',
+                cols: dims.cols,
+                rows: dims.rows
+            }));
+        }
         
         // Update status
         this.updateStatus(
