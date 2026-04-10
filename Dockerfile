@@ -1,42 +1,22 @@
 # syntax=docker/dockerfile:1
 
 # Build stage
-FROM rust:1.88-alpine AS builder
+FROM golang:1.22-alpine AS builder
 
 # Install build dependencies
-RUN apk add --no-cache \
-    musl-dev \
-    openssl-dev \
-    openssl-libs-static \
-    pkgconfig \
-    build-base
+RUN apk add --no-cache git ca-certificates
 
 WORKDIR /app
 
-# Copy cargo config for mirrors (optional, speeds up builds in China)
-COPY .cargo/config.toml /root/.cargo/config.toml
+# Copy go.mod and go.sum first for better caching
+COPY go.mod go.sum ./
+RUN go mod download
 
-# Copy manifests first for better caching
-COPY Cargo.toml Cargo.lock ./
+# Copy source code
+COPY . .
 
-# Create dummy main.rs to cache dependencies
-RUN mkdir src && \
-    echo "fn main() {}" > src/main.rs && \
-    cargo build --release && \
-    rm -rf src target/release/psh* target/release/deps/psh*
-
-# Copy actual source code
-COPY src ./src
-
-# Copy static files for build
-COPY static ./static
-
-# Build the actual binary
-RUN cargo build --release
-
-# Verify binary is statically linked
-RUN ldd target/release/psh 2>&1 | grep -q "not a dynamic executable" || \
-    ldd target/release/psh || true
+# Build the binary
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /psh ./cmd/psh
 
 # Runtime stage - minimal image
 FROM alpine:3.19
@@ -50,7 +30,7 @@ RUN apk add --no-cache \
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=builder /app/target/release/psh /usr/local/bin/psh
+COPY --from=builder /psh /usr/local/bin/psh
 
 # Copy static files
 COPY static /app/static
@@ -67,8 +47,7 @@ ENV PSH_HOST=0.0.0.0 \
     PSH_PORT=8443 \
     PSH_SSH_CONFIG=/root/.ssh/config \
     PSH_AUDIT_LOG=/var/log/psh/audit.jsonl \
-    PSH_AUTO_CERTS=true \
-    RUST_LOG=info
+    PSH_AUTO_CERTS=true
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

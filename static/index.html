@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>psh - WebSSH Proxy</title>
+    <title>psh - WebShell</title>
     <link rel="stylesheet" href="/static/xterm/xterm.css" />
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -34,8 +34,8 @@
             display: flex;
             align-items: center;
             gap: 8px;
-            min-width: 120px;
-            max-width: 200px;
+            min-width: 80px;
+            max-width: 150px;
             border-radius: 4px 4px 0 0;
         }
         .tab.active { background: #1e1e1e; border-bottom: 2px solid #007acc; }
@@ -52,6 +52,8 @@
         .terminal-container.active { display: block; }
         #welcome { display: flex; align-items: center; justify-content: center; flex-direction: column; color: #666; font-size: 14px; }
         #welcome h2 { font-size: 24px; margin-bottom: 10px; color: #888; }
+        #welcome p { margin-bottom: 5px; }
+        #welcome code { background: #333; padding: 2px 6px; border-radius: 3px; color: #007acc; }
         .dialog {
             position: fixed;
             top: 50%;
@@ -60,7 +62,7 @@
             background: #252526;
             border: 1px solid #3e3e42;
             padding: 30px;
-            min-width: 400px;
+            min-width: 350px;
             border-radius: 6px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.5);
             z-index: 1001;
@@ -82,8 +84,6 @@
         .btn { padding: 8px 16px; border: none; cursor: pointer; font-size: 14px; border-radius: 4px; }
         .btn-primary { background: #007acc; color: white; }
         .btn-primary:hover { background: #005a9e; }
-        .btn-secondary { background: #3c3c3c; color: #d4d4d4; border: 1px solid #3e3e42; }
-        .btn-secondary:hover { background: #4c4c4c; }
         .overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.7); display: none; z-index: 1000; }
         .overlay.active { display: block; }
         .status-bar { background: #007acc; color: white; padding: 5px 20px; font-size: 12px; display: flex; justify-content: space-between; }
@@ -95,14 +95,15 @@
     <div class="header">
         <div class="logo">psh</div>
         <div class="tab-bar" id="tabBar"></div>
-        <button class="add-tab" id="addTabBtn" title="New Connection">+</button>
+        <button class="add-tab" id="addTabBtn" title="New Terminal">+</button>
     </div>
 
     <div class="content" id="content">
         <div class="terminal-container active" id="welcome">
             <div>
                 <h2>Welcome to psh</h2>
-                <p>Click + to start a new SSH connection</p>
+                <p>Click + to open a new terminal</p>
+                <p style="margin-top: 15px; color: #888;">Run <code>ssh user@host</code> to connect</p>
             </div>
         </div>
     </div>
@@ -113,24 +114,6 @@
     </div>
 
     <div class="overlay" id="overlay"></div>
-
-    <div class="dialog hidden" id="connectionDialog">
-        <div class="dialog-title">New SSH Connection</div>
-        <div class="form-group">
-            <label class="form-label">Host [user@]hostname[:port]</label>
-            <input type="text" class="form-input" id="hostInput" placeholder="user@192.168.1.1:22">
-        </div>
-        <div class="form-group">
-            <label class="form-label">Or select from ~/.ssh/config</label>
-            <select class="form-input" id="hostSelect">
-                <option value="">-- Select host --</option>
-            </select>
-        </div>
-        <div class="button-group">
-            <button class="btn btn-primary" id="connectBtn">Connect</button>
-            <button class="btn btn-secondary" id="cancelBtn">Cancel</button>
-        </div>
-    </div>
 
     <div class="dialog hidden" id="loginDialog">
         <div class="dialog-title">Login to psh</div>
@@ -152,6 +135,7 @@
 
         const sessions = new Map();
         let activeSessionId = null;
+        let sessionCount = 0;
 
         function escapeHtml(text) {
             const div = document.createElement('div');
@@ -160,26 +144,20 @@
         }
 
         async function init() {
-            $('addTabBtn').onclick = showConnectionDialog;
-            $('cancelBtn').onclick = hideConnectionDialog;
-            $('overlay').onclick = hideConnectionDialog;
-            $('connectBtn').onclick = handleConnect;
+            $('addTabBtn').onclick = () => createSession();
             $('loginBtn').onclick = handleLogin;
             $('loginPassword').onkeypress = e => { if (e.key === 'Enter') handleLogin(); };
 
-            const res = await fetch('/api/hosts', { credentials: 'include' });
-            if (res.ok) {
-                const hosts = await res.json();
-                const select = $('hostSelect');
-                hosts.forEach(h => {
-                    const opt = document.createElement('option');
-                    opt.value = h.name;
-                    opt.textContent = `${h.name} (${h.user || 'user'}@${h.hostname}:${h.port})`;
-                    select.appendChild(opt);
-                });
-            } else {
-                // Clear invalid cookie and show login
-                document.cookie = 'psh_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+            // Test auth
+            const res = await fetch('/api/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ password: '' })
+            });
+
+            if (res.status === 401 || res.status === 400) {
+                // Need login
                 $('loginDialog').classList.remove('hidden');
                 $('overlay').classList.add('active');
             }
@@ -196,62 +174,23 @@
             if (res.ok) {
                 $('loginDialog').classList.add('hidden');
                 $('overlay').classList.remove('active');
-                init();
+                // Auto create first session
+                createSession();
             } else {
                 $('loginError').textContent = 'Invalid password';
                 $('loginError').classList.remove('hidden');
             }
         }
 
-        function showConnectionDialog() {
-            $('overlay').classList.add('active');
-            $('connectionDialog').classList.remove('hidden');
-            $('hostInput').focus();
-        }
-
-        function hideConnectionDialog() {
-            $('overlay').classList.remove('active');
-            $('connectionDialog').classList.add('hidden');
-        }
-
-        function handleConnect() {
-            let host = $('hostInput').value.trim();
-            let user = null;
-            let port = null;
-
-            if (!host) {
-                host = $('hostSelect').value;
-            }
-
-            if (!host) {
-                alert('Please enter or select a host');
-                return;
-            }
-
-            // Parse user@host:port
-            if (host.includes('@')) {
-                const parts = host.split('@');
-                user = parts[0];
-                host = parts[1];
-            }
-            if (host.includes(':')) {
-                const parts = host.split(':');
-                host = parts[0];
-                port = parseInt(parts[1], 10);
-            }
-
-            hideConnectionDialog();
-            createSession(host, user, port);
-        }
-
-        function createSession(host, user, port) {
-            const id = 's' + Date.now();
+        function createSession() {
+            sessionCount++;
+            const id = 's' + sessionCount;
 
             // Create tab
             const tab = document.createElement('div');
             tab.className = 'tab';
             tab.id = 'tab-' + id;
-            tab.innerHTML = `<span class="tab-title">${escapeHtml(host)}</span><span class="tab-close">×</span>`;
+            tab.innerHTML = `<span class="tab-title">Shell ${sessionCount}</span><span class="tab-close">×</span>`;
             tab.onclick = e => {
                 if (e.target.classList.contains('tab-close')) closeSession(id);
                 else switchSession(id);
@@ -287,8 +226,11 @@
             const ws = new WebSocket(`${wsProtocol}//${location.host}/ws/terminal`);
 
             ws.onopen = () => {
-                term.writeln('\x1b[32mConnecting to ' + host + '...\x1b[0m');
-                ws.send(JSON.stringify({ type: 'connect', host, user, port }));
+                // Send initial terminal size
+                const dims = fitAddon.proposeDimensions();
+                if (dims) {
+                    ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
+                }
             };
 
             ws.onmessage = e => {
@@ -297,14 +239,7 @@
                     if (msg.type === 'output') {
                         term.write(atob(msg.data));
                     } else if (msg.type === 'connected') {
-                        term.writeln('\x1b[32mConnected!\x1b[0m');
                         $('statusText').textContent = 'Connected';
-                        $('connectionInfo').textContent = (msg.user || 'user') + '@' + msg.host;
-                        // Send initial terminal size
-                        const dims = fitAddon.proposeDimensions();
-                        if (dims) {
-                            ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
-                        }
                     } else if (msg.type === 'error') {
                         term.writeln('\x1b[31mError: ' + msg.message + '\x1b[0m');
                     }
@@ -336,7 +271,7 @@
             });
             resizeObserver.observe(container);
 
-            sessions.set(id, { ws, term, fitAddon, container, tab, host, resizeObserver });
+            sessions.set(id, { ws, term, fitAddon, container, tab, resizeObserver });
             switchSession(id);
         }
 

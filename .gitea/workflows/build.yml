@@ -9,126 +9,87 @@ on:
       - main
 
 env:
-  CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
+  GO_VERSION: '1.22'
 
 jobs:
   build-and-test:
     name: Build and Test
     runs-on: ubuntu-latest
-    container: rust:1.88
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
-            arch: amd64
-            platform: linux
-          - target: aarch64-unknown-linux-gnu
-            arch: arm64
-            platform: linux
+          - goos: linux
+            goarch: amd64
+            platform: linux/amd64
+          - goos: linux
+            goarch: arm64
+            platform: linux/arm64
+          - goos: darwin
+            goarch: amd64
+            platform: darwin/amd64
+          - goos: darwin
+            goarch: arm64
+            platform: darwin/arm64
 
     steps:
-      - name: Install Node.js (required for checkout action)
-        run: |
-          apt-get update
-          apt-get install -y nodejs
-
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Cache cargo
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
         uses: actions/cache@v3
         with:
           path: |
-            /usr/local/cargo/registry
-            /usr/local/cargo/git
-          key: cargo-registry-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('**/go.sum') }}
           restore-keys: |
-            cargo-registry-${{ matrix.target }}-
-            cargo-registry-
+            ${{ runner.os }}-go-${{ matrix.goos }}-${{ matrix.goarch }}-
 
-      - name: Install dependencies
-        run: |
-          apt-get update
-          apt-get install -y pkg-config libssl-dev build-essential cmake perl git
-
-      - name: Setup cross-compilation for AMD64
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: |
-          apt-get install -y gcc-x86-64-linux-gnu g++-x86-64-linux-gnu binutils-x86-64-linux-gnu
-          ln -sf /usr/bin/x86_64-linux-gnu-gcc /usr/local/bin/gcc
-          ln -sf /usr/bin/x86_64-linux-gnu-g++ /usr/local/bin/g++
-          ln -sf /usr/bin/x86_64-linux-gnu-ar /usr/local/bin/ar
-
-      - name: Setup cross-compilation for ARM64
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu
-
-      - name: Add Rust target
-        run: rustup target add ${{ matrix.target }}
-
-      - name: Build for AMD64
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: cargo build --release --target ${{ matrix.target }}
-        env:
-          CC: x86_64-linux-gnu-gcc
-          CXX: x86_64-linux-gnu-g++
-          AR: x86_64-linux-gnu-ar
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: x86_64-linux-gnu-gcc
-          AWS_LC_SYS_CC: x86_64-linux-gnu-gcc
-          AWS_LC_SYS_CXX: x86_64-linux-gnu-g++
-
-      - name: Build for ARM64
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: cargo build --release --target ${{ matrix.target }}
-        env:
-          CC: aarch64-linux-gnu-gcc
-          CXX: aarch64-linux-gnu-g++
-          AR: aarch64-linux-gnu-ar
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          AWS_LC_SYS_CC: aarch64-linux-gnu-gcc
-          AWS_LC_SYS_CXX: aarch64-linux-gnu-g++
+      - name: Download dependencies
+        run: go mod download
 
       - name: Run tests (native only)
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: cargo test --verbose
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: go test -v ./...
 
-      - name: Install formatting and linting tools
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: rustup component add rustfmt clippy
+      - name: Run linter (native only)
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: latest
 
-      - name: Check formatting
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: cargo fmt -- --check
-
-      - name: Run clippy
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Install strip tools for ARM64
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: apt-get install -y binutils-aarch64-linux-gnu
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -ldflags="-s -w" -o psh ./cmd/psh
 
       - name: Prepare binary
         run: |
-          cd target/${{ matrix.target }}/release
-          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
-            aarch64-linux-gnu-strip psh || true
+          # Package binary
+          if [ "${{ matrix.goos }}" = "darwin" ]; then
+            tar -czf psh-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz psh
+            shasum -a 256 psh-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz > psh-${{ matrix.goos }}-${{ matrix.goarch }}.sha256
           else
-            strip psh || true
+            tar -czf psh-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz psh
+            sha256sum psh-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz > psh-${{ matrix.goos }}-${{ matrix.goarch }}.sha256
           fi
-          tar -czf psh-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz psh
-          sha256sum psh-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz > psh-${{ matrix.platform }}-${{ matrix.arch }}.sha256
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v3
         with:
-          name: psh-${{ matrix.platform }}-${{ matrix.arch }}
+          name: psh-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
-            target/${{ matrix.target }}/release/psh-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz
-            target/${{ matrix.target }}/release/psh-${{ matrix.platform }}-${{ matrix.arch }}.sha256
+            psh-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+            psh-${{ matrix.goos }}-${{ matrix.goarch }}.sha256
           retention-days: 7
 
   docker:
@@ -146,19 +107,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Download artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: psh-linux-${{ matrix.arch }}
-          path: artifacts
-
-      - name: Extract binary
-        run: |
-          cd artifacts
-          tar -xzf psh-linux-${{ matrix.arch }}.tar.gz
-          mv psh ../psh
-          ls -la ..
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -183,7 +131,6 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: Dockerfile.ci
           platforms: ${{ matrix.platform }}
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/psh:${{ steps.version.outputs.VERSION }}-${{ matrix.arch }}
@@ -235,17 +182,29 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download AMD64 artifact
+      - name: Download Linux AMD64
         uses: actions/download-artifact@v3
         with:
           name: psh-linux-amd64
           path: artifacts/psh-linux-amd64
 
-      - name: Download ARM64 artifact
+      - name: Download Linux ARM64
         uses: actions/download-artifact@v3
         with:
           name: psh-linux-arm64
           path: artifacts/psh-linux-arm64
+
+      - name: Download macOS AMD64
+        uses: actions/download-artifact@v3
+        with:
+          name: psh-darwin-amd64
+          path: artifacts/psh-darwin-amd64
+
+      - name: Download macOS ARM64
+        uses: actions/download-artifact@v3
+        with:
+          name: psh-darwin-arm64
+          path: artifacts/psh-darwin-arm64
 
       - name: Prepare release files
         run: |
@@ -254,6 +213,10 @@ jobs:
           cp artifacts/psh-linux-amd64/*.sha256 release-files/
           cp artifacts/psh-linux-arm64/*.tar.gz release-files/
           cp artifacts/psh-linux-arm64/*.sha256 release-files/
+          cp artifacts/psh-darwin-amd64/*.tar.gz release-files/
+          cp artifacts/psh-darwin-amd64/*.sha256 release-files/
+          cp artifacts/psh-darwin-arm64/*.tar.gz release-files/
+          cp artifacts/psh-darwin-arm64/*.sha256 release-files/
           ls -lh release-files/
 
       - name: Extract version
@@ -273,6 +236,8 @@ jobs:
             |----------|--------------|----------|
             | Linux | AMD64 (x86_64) | `psh-linux-amd64.tar.gz` |
             | Linux | ARM64 (aarch64) | `psh-linux-arm64.tar.gz` |
+            | macOS | AMD64 (x86_64) | `psh-darwin-amd64.tar.gz` |
+            | macOS | ARM64 (Apple Silicon) | `psh-darwin-arm64.tar.gz` |
 
             ### Docker Images
 

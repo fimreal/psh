@@ -4,13 +4,15 @@
 *.dll
 *.so
 *.dylib
+psh
 
-# Test binary, built with `cargo test`
+# Go build artifacts
+go.work
+go.work.sum
+
+# Test binary
 target/
 **/*.rs.bk
-
-# Cargo lock file (for applications)
-# Cargo.lock
 
 # IDE
 .vscode/
