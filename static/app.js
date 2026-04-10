@@ -548,6 +548,14 @@ class PshApp {
         this.sessions.forEach(session => {
             if (session.container.classList.contains('active')) {
                 session.fitAddon.fit();
+                const dims = session.fitAddon.proposeDimensions();
+                if (session.ws && session.ws.readyState === WebSocket.OPEN && dims) {
+                    session.ws.send(JSON.stringify({
+                        type: 'resize',
+                        cols: dims.cols,
+                        rows: dims.rows
+                    }));
+                }
             }
         });
     }
