@@ -13,15 +13,10 @@
 **修复**: 使用 context 协调生命周期
 
 ### 2. SSH 主机密钥验证不安全
-**位置**: `ClientHandler::check_server_key`
+**位置**: `verifyHostKey` 函数
 **问题**:
 - 当服务器密钥不在 known_hosts 时，代码接受连接并仅打印警告
 - 这使得 MITM 攻击成为可能
-
-```go
-log.Printf("Server key not found in known_hosts - accepting anyway")
-return true  // 危险！
-```
 
 **影响**: 安全漏洞，可能遭受中间人攻击
 **修复**: 应该拒绝连接或要求用户确认
