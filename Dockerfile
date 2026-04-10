@@ -16,7 +16,7 @@ FROM scratch
 
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
-COPY --from=builder /app/psh /psh
+COPY --from=builder /psh /psh
 COPY static /app/static
 
 WORKDIR /app
