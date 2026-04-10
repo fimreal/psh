@@ -154,8 +154,8 @@ func (c *WSClient) handleResize(msg WSMessage) {
 		return
 	}
 
-	cols := msg.Cols
-	rows := msg.Rows
+	cols, rows := msg.Cols, msg.Rows
+	log.Debugw("Terminal resize", "cols", cols, "rows", rows)
 	if cols == 0 {
 		cols = 80
 	}

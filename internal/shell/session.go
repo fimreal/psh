@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/fimreal/goutils/ezap"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -66,14 +67,16 @@ func (s *Session) Start() {
 	s.printWelcome()
 }
 
+var helpText = "\r\nAvailable Commands:\r\n\r\n" +
+	"  ssh user@host[:port]       Connect with SSH key\r\n" +
+	"  ssh hostname               Connect using ~/.ssh/config\r\n" +
+	"  help                       Show this help\r\n" +
+	"  clear                      Clear screen\r\n" +
+	"  exit                       Close session\r\n\r\n"
+
 func (s *Session) printWelcome() {
-	s.outputChan <- []byte("psh - WebSSH Shell\r\n\r\n")
-	s.outputChan <- []byte("Commands:\r\n")
-	s.outputChan <- []byte("  ssh user@host[:port]       Connect with SSH key\r\n")
-	s.outputChan <- []byte("  ssh hostname               Connect using ~/.ssh/config\r\n")
-	s.outputChan <- []byte("  help                       Show this help\r\n")
-	s.outputChan <- []byte("  clear                      Clear screen\r\n")
-	s.outputChan <- []byte("  exit                       Close session\r\n\r\n")
+	s.outputChan <- []byte("psh - WebSSH Shell\r\n")
+	s.outputChan <- []byte(helpText)
 	s.outputChan <- []byte("$ ")
 }
 
@@ -230,24 +233,19 @@ func (s *Session) executeCommand(cmd string) {
 		s.outputChan <- []byte("\x1b[2J\x1b[H")
 		s.printPrompt()
 	default:
-		s.outputChan <- []byte(fmt.Sprintf("\r\nUnknown command: %s\r\n", parts[0]))
+		s.outputChan <- fmt.Appendf(nil, "\r\nUnknown command: %s\r\n", parts[0])
 		s.outputChan <- []byte("Type 'help' for available commands\r\n")
 		s.printPrompt()
 	}
 }
 
 func (s *Session) showHelp() {
-	s.outputChan <- []byte("\r\nAvailable Commands:\r\n\r\n")
-	s.outputChan <- []byte("  ssh user@host[:port]       Connect with SSH key\r\n")
-	s.outputChan <- []byte("  ssh hostname               Connect using ~/.ssh/config\r\n")
-	s.outputChan <- []byte("  help                       Show this help\r\n")
-	s.outputChan <- []byte("  clear                      Clear screen\r\n")
-	s.outputChan <- []byte("  exit                       Close session\r\n\r\n")
+	s.outputChan <- []byte(helpText)
 
 	if len(s.hosts) > 0 {
 		s.outputChan <- []byte("Configured hosts from ~/.ssh/config:\r\n")
 		for name, h := range s.hosts {
-			s.outputChan <- []byte(fmt.Sprintf("  %-15s %s@%s:%d\r\n", name, h.User, h.Hostname, h.Port))
+			s.outputChan <- fmt.Appendf(nil, "  %-15s %s@%s:%d\r\n", name, h.User, h.Hostname, h.Port)
 		}
 		s.outputChan <- []byte("\r\n")
 	}
@@ -261,18 +259,16 @@ func (s *Session) showHelp() {
 
 func (s *Session) connectSSH(target string) {
 	var sshUser, host string
-	var port = 22
+	port := 22
 	var identityFile string
 
-	// Check if target is a host alias from config
 	if hc, ok := s.hosts[target]; ok {
 		sshUser = hc.User
 		host = hc.Hostname
 		port = hc.Port
 		identityFile = hc.IdentityFile
-		s.outputChan <- []byte(fmt.Sprintf("\r\nConnecting to %s (%s@%s:%d)...\r\n", target, sshUser, host, port))
+		s.outputChan <- fmt.Appendf(nil, "\r\nConnecting to %s (%s@%s:%d)...\r\n", target, sshUser, host, port)
 	} else {
-		// Parse [user@]host[:port]
 		if idx := strings.Index(target, "@"); idx > 0 {
 			sshUser = target[:idx]
 			host = target[idx+1:]
@@ -288,21 +284,18 @@ func (s *Session) connectSSH(target string) {
 			host = host[:idx]
 		}
 
-		s.outputChan <- []byte(fmt.Sprintf("\r\nConnecting to %s@%s:%d...\r\n", sshUser, host, port))
+		s.outputChan <- fmt.Appendf(nil, "\r\nConnecting to %s@%s:%d...\r\n", sshUser, host, port)
 	}
 
-	// Load SSH keys
 	home, _ := os.UserHomeDir()
-	var keyFiles []string
-
-	if identityFile != "" {
-		keyFiles = append(keyFiles, identityFile)
-	}
-	keyFiles = append(keyFiles,
+	keyFiles := []string{
 		filepath.Join(home, ".ssh", "id_ed25519"),
 		filepath.Join(home, ".ssh", "id_rsa"),
 		filepath.Join(home, ".ssh", "id_ecdsa"),
-	)
+	}
+	if identityFile != "" {
+		keyFiles = append([]string{identityFile}, keyFiles...)
+	}
 
 	var signers []ssh.Signer
 	for _, keyFile := range keyFiles {
@@ -313,7 +306,6 @@ func (s *Session) connectSSH(target string) {
 		}
 	}
 
-	// Save connection info for password fallback
 	s.mu.Lock()
 	s.pendingSSHUser = sshUser
 	s.pendingSSHHost = host
@@ -321,14 +313,12 @@ func (s *Session) connectSSH(target string) {
 	s.pendingSigners = signers
 	s.mu.Unlock()
 
-	// Try connecting with keys first
 	if len(signers) > 0 {
 		s.outputChan <- []byte("Trying SSH key authentication...\r\n")
-		s.tryConnect(sshUser, host, port, []ssh.AuthMethod{ssh.PublicKeys(signers...)})
+		s.tryConnect(host, port, []ssh.AuthMethod{ssh.PublicKeys(signers...)})
 		return
 	}
 
-	// No keys found, prompt for password
 	s.promptPassword()
 }
 
@@ -349,17 +339,16 @@ func (s *Session) connectWithPassword(password string) {
 		Timeout: 10 * time.Second,
 	}
 
-	s.tryConnectWithFallback(s.pendingSSHUser, s.pendingSSHHost, s.pendingSSHPort, config.Auth, false)
+	s.tryConnectWithFallback(s.pendingSSHHost, s.pendingSSHPort, config.Auth, false)
 }
 
-func (s *Session) tryConnect(sshUser, host string, port int, authMethods []ssh.AuthMethod) {
-	s.tryConnectWithFallback(sshUser, host, port, authMethods, true)
+func (s *Session) tryConnect(host string, port int, authMethods []ssh.AuthMethod) {
+	s.tryConnectWithFallback(host, port, authMethods, true)
 }
 
-func (s *Session) tryConnectWithFallback(sshUser, host string, port int, authMethods []ssh.AuthMethod, allowPasswordFallback bool) {
-	// SSH config
+func (s *Session) tryConnectWithFallback(host string, port int, authMethods []ssh.AuthMethod, allowPasswordFallback bool) {
 	config := &ssh.ClientConfig{
-		User: sshUser,
+		User: s.pendingSSHUser,
 		Auth: authMethods,
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 			return s.verifyHostKey(hostname, key)
@@ -377,7 +366,7 @@ func (s *Session) tryConnectWithFallback(sshUser, host string, port int, authMet
 			s.promptPassword()
 			return
 		}
-		s.outputChan <- []byte(fmt.Sprintf("\r\nConnection failed: %s\r\n", err))
+		s.outputChan <- fmt.Appendf(nil, "\r\nConnection failed: %s\r\n", err)
 		s.printPrompt()
 		return
 	}
@@ -386,7 +375,7 @@ func (s *Session) tryConnectWithFallback(sshUser, host string, port int, authMet
 	session, err := client.NewSession()
 	if err != nil {
 		_ = client.Close()
-		s.outputChan <- []byte(fmt.Sprintf("\r\nSession error: %s\r\n", err))
+		s.outputChan <- fmt.Appendf(nil, "\r\nSession error: %s\r\n", err)
 		s.printPrompt()
 		return
 	}
@@ -394,10 +383,16 @@ func (s *Session) tryConnectWithFallback(sshUser, host string, port int, authMet
 	stdin, _ := session.StdinPipe()
 	stdout, _ := session.StdoutPipe()
 
-	// Request PTY
-	if err := session.RequestPty("xterm-256color", s.cols, s.rows, ssh.TerminalModes{}); err != nil {
+	// Request PTY with current terminal size (h, w order!)
+	s.mu.Lock()
+	cols, rows := s.cols, s.rows
+	s.mu.Unlock()
+
+	log.Debugw("SSH PTY request", "cols", cols, "rows", rows)
+
+	if err := session.RequestPty("xterm-256color", rows, cols, ssh.TerminalModes{}); err != nil {
 		_ = client.Close()
-		s.outputChan <- []byte(fmt.Sprintf("\r\nPTY request failed: %s\r\n", err))
+		s.outputChan <- fmt.Appendf(nil, "\r\nPTY request failed: %s\r\n", err)
 		s.printPrompt()
 		return
 	}
@@ -405,7 +400,7 @@ func (s *Session) tryConnectWithFallback(sshUser, host string, port int, authMet
 	// Start shell
 	if err := session.Shell(); err != nil {
 		_ = client.Close()
-		s.outputChan <- []byte(fmt.Sprintf("\r\nShell start failed: %s\r\n", err))
+		s.outputChan <- fmt.Appendf(nil, "\r\nShell start failed: %s\r\n", err)
 		s.printPrompt()
 		return
 	}
@@ -468,7 +463,7 @@ func (s *Session) verifyHostKey(hostname string, key ssh.PublicKey) error {
 
 	// Check if known_hosts exists
 	if _, err := os.Stat(knownHostsPath); os.IsNotExist(err) {
-		s.outputChan <- []byte(fmt.Sprintf("\r\nNew host key for %s - auto-accepting\r\n", hostname))
+		s.outputChan <- fmt.Appendf(nil, "\r\nNew host key for %s - auto-accepting\r\n", hostname)
 		return s.addHostKey(hostname, key, knownHostsPath)
 	}
 
@@ -501,8 +496,8 @@ func (s *Session) verifyHostKey(hostname string, key ssh.PublicKey) error {
 	}
 
 	// Key not found - auto-accept
-	s.outputChan <- []byte(fmt.Sprintf("\r\nNew host key for %s\r\n", hostname))
-	s.outputChan <- []byte(fmt.Sprintf("Fingerprint: %s\r\n", ssh.FingerprintSHA256(key)))
+	s.outputChan <- fmt.Appendf(nil, "\r\nNew host key for %s\r\n", hostname)
+	s.outputChan <- fmt.Appendf(nil, "Fingerprint: %s\r\n", ssh.FingerprintSHA256(key))
 	s.outputChan <- []byte("Accepting and adding to known_hosts...\r\n")
 	return s.addHostKey(hostname, key, knownHostsPath)
 }

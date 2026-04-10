@@ -9,31 +9,27 @@ import (
 )
 
 type Config struct {
-	Host             string
-	Port             int
-	AuditLogPath     string
-	TLSCertPath      string
-	TLSKeyPath       string
+	Host              string
+	Port              int
+	AuditLogPath      string
+	TLSCertPath       string
+	TLSKeyPath        string
 	AutoGenerateCerts bool
-	JWTSecret        string
-	JWTExpire        int
-	Password         string
-	Debug            bool
+	JWTSecret         string
+	JWTExpire         int
+	Password          string
+	Debug             bool
 }
 
 func Load() (*Config, error) {
 	var cfg Config
 
-	// Define root command
 	rootCmd := &cobra.Command{
 		Use:   "psh",
 		Short: "WebSSH Proxy Server",
-		Run: func(cmd *cobra.Command, args []string) {
-			// Command just parses flags, actual work is in main
-		},
+		Run:   func(cmd *cobra.Command, args []string) {},
 	}
 
-	// Define flags
 	flags := rootCmd.Flags()
 	flags.StringVarP(&cfg.Host, "host", "H", "0.0.0.0", "Host address to bind to")
 	flags.IntVarP(&cfg.Port, "port", "p", 8443, "Port to listen on")
@@ -46,58 +42,45 @@ func Load() (*Config, error) {
 	flags.StringVarP(&cfg.Password, "password", "P", "", "Password for authentication (required)")
 	flags.BoolVar(&cfg.Debug, "debug", false, "Enable debug logging")
 
-	// Bind environment variables
-	_ = viper.BindEnv("host", "PSH_HOST")
-	_ = viper.BindEnv("port", "PSH_PORT")
-	_ = viper.BindEnv("audit-log", "PSH_AUDIT_LOG")
-	_ = viper.BindEnv("tls-cert", "PSH_TLS_CERT")
-	_ = viper.BindEnv("tls-key", "PSH_TLS_KEY")
-	_ = viper.BindEnv("auto-certs", "PSH_AUTO_CERTS")
-	_ = viper.BindEnv("jwt-secret", "PSH_JWT_SECRET")
-	_ = viper.BindEnv("jwt-expire", "PSH_JWT_EXPIRE")
-	_ = viper.BindEnv("password", "PSH_PASSWORD")
+	viper.AutomaticEnv()
+	viper.SetEnvPrefix("PSH")
 
-	// Parse flags
 	if err := rootCmd.Execute(); err != nil {
 		return nil, err
 	}
 
-	// Override with environment variables if set
-	if h := viper.GetString("host"); h != "" {
-		cfg.Host = h
+	if viper.IsSet("HOST") {
+		cfg.Host = viper.GetString("HOST")
 	}
-	if p := viper.GetInt("port"); p != 0 {
-		cfg.Port = p
+	if viper.IsSet("PORT") {
+		cfg.Port = viper.GetInt("PORT")
 	}
-	if a := viper.GetString("audit-log"); a != "" {
-		cfg.AuditLogPath = a
+	if viper.IsSet("AUDIT_LOG") {
+		cfg.AuditLogPath = viper.GetString("AUDIT_LOG")
 	}
-	if tc := viper.GetString("tls-cert"); tc != "" {
-		cfg.TLSCertPath = tc
+	if viper.IsSet("TLS_CERT") {
+		cfg.TLSCertPath = viper.GetString("TLS_CERT")
 	}
-	if tk := viper.GetString("tls-key"); tk != "" {
-		cfg.TLSKeyPath = tk
+	if viper.IsSet("TLS_KEY") {
+		cfg.TLSKeyPath = viper.GetString("TLS_KEY")
 	}
-	if viper.IsSet("auto-certs") {
-		cfg.AutoGenerateCerts = viper.GetBool("auto-certs")
+	if viper.IsSet("AUTO_CERTS") {
+		cfg.AutoGenerateCerts = viper.GetBool("AUTO_CERTS")
 	}
-	if js := viper.GetString("jwt-secret"); js != "" {
-		cfg.JWTSecret = js
+	if viper.IsSet("JWT_SECRET") {
+		cfg.JWTSecret = viper.GetString("JWT_SECRET")
 	}
-	if je := viper.GetInt("jwt-expire"); je != 0 {
-		cfg.JWTExpire = je
+	if viper.IsSet("JWT_EXPIRE") {
+		cfg.JWTExpire = viper.GetInt("JWT_EXPIRE")
 	}
-	if pw := viper.GetString("password"); pw != "" {
-		cfg.Password = pw
+	if viper.IsSet("PASSWORD") {
+		cfg.Password = viper.GetString("PASSWORD")
 	}
 
-	// Validate required fields
 	if cfg.Password == "" {
-		_ = rootCmd.Help()
-		os.Exit(1)
+		cfg.Password = "psh" // Default password for convenience
 	}
 
-	// Expand tilde in paths
 	cfg.AuditLogPath = expandTilde(cfg.AuditLogPath)
 	cfg.TLSCertPath = expandTilde(cfg.TLSCertPath)
 	cfg.TLSKeyPath = expandTilde(cfg.TLSKeyPath)

@@ -28,9 +28,9 @@ type Event struct {
 }
 
 type Logger struct {
-	path    string
-	file    *os.File
-	mu      sync.Mutex
+	path       string
+	file       *os.File
+	mu         sync.Mutex
 	maxRetries int
 }
 

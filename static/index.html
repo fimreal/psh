@@ -45,11 +45,13 @@
         .tab-close:hover { background: #c75450; color: white; }
         .add-tab { background: #2d2d30; border: 1px solid #3e3e42; padding: 8px 12px; cursor: pointer; font-size: 16px; border-radius: 4px; color: #d4d4d4; }
         .add-tab:hover { background: #3e3e42; }
-        .content { flex: 1; display: flex; position: relative; overflow: hidden; }
-        .terminal-container { flex: 1; padding: 10px; display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; overflow: auto; }
-        .terminal-container .xterm { height: 100%; }
-        .terminal-container .xterm-viewport { overflow-y: auto !important; -webkit-overflow-scrolling: touch; }
+        .content { flex: 1; position: relative; min-height: 0; }
+        .terminal-container { position: absolute; inset: 0; display: none; padding: 8px; }
         .terminal-container.active { display: block; }
+        /* Force xterm to fill container width */
+        .xterm { width: 100%; height: 100%; }
+        .xterm-viewport { width: 100% !important; }
+        .xterm-screen { width: 100% !important; }
         #welcome { display: flex; align-items: center; justify-content: center; flex-direction: column; color: #666; font-size: 14px; }
         #welcome h2 { font-size: 24px; margin-bottom: 10px; color: #888; }
         #welcome p { margin-bottom: 5px; }
@@ -197,13 +199,15 @@
             };
             $('tabBar').appendChild(tab);
 
-            // Create terminal
+            // Create terminal container
             const container = document.createElement('div');
             container.className = 'terminal-container';
             container.id = 'container-' + id;
             $('content').appendChild(container);
 
+            // Hide welcome and show container
             $('welcome').classList.remove('active');
+            container.classList.add('active');
 
             const term = new Terminal({
                 theme: {
@@ -220,7 +224,18 @@
             const fitAddon = new FitAddon();
             term.loadAddon(fitAddon);
             term.open(container);
+
+            // Debug: Check xterm dimensions after open
+            console.log('After open:');
+            console.log('  .xterm width:', container.querySelector('.xterm')?.offsetWidth);
+            console.log('  .xterm-screen width:', container.querySelector('.xterm-screen')?.offsetWidth);
+            console.log('  .xterm-viewport width:', container.querySelector('.xterm-viewport')?.offsetWidth);
+
             fitAddon.fit();
+
+            console.log('After fit:');
+            console.log('  .xterm width:', container.querySelector('.xterm')?.offsetWidth);
+            console.log('  .xterm-screen width:', container.querySelector('.xterm-screen')?.offsetWidth);
 
             const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
             const ws = new WebSocket(`${wsProtocol}//${location.host}/ws/terminal`);
@@ -262,17 +277,38 @@
             });
 
             // Handle resize
-            const resizeObserver = new ResizeObserver(() => {
-                fitAddon.fit();
-                const dims = fitAddon.proposeDimensions();
-                if (ws.readyState === WebSocket.OPEN && dims) {
-                    ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
-                }
-            });
+            let resizeTimeout;
+            const handleResize = () => {
+                clearTimeout(resizeTimeout);
+                resizeTimeout = setTimeout(() => {
+                    fitAddon.fit();
+                    const dims = fitAddon.proposeDimensions();
+                    console.log('Container:', container.offsetWidth, 'x', container.offsetHeight);
+                    console.log('.xterm:', container.querySelector('.xterm')?.offsetWidth);
+                    console.log('.xterm-screen:', container.querySelector('.xterm-screen')?.offsetWidth);
+                    console.log('Terminal:', dims);
+                    if (ws.readyState === WebSocket.OPEN && dims) {
+                        ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
+                    }
+                }, 50);
+            };
+            const resizeObserver = new ResizeObserver(handleResize);
             resizeObserver.observe(container);
+            window.addEventListener('resize', handleResize);
+
+            // Set as active session
+            if (activeSessionId) {
+                const cur = sessions.get(activeSessionId);
+                if (cur) {
+                    cur.tab.classList.remove('active');
+                    cur.container.classList.remove('active');
+                }
+            }
+            tab.classList.add('active');
+            activeSessionId = id;
+            term.focus();
 
             sessions.set(id, { ws, term, fitAddon, container, tab, resizeObserver });
-            switchSession(id);
         }
 
         function switchSession(id) {
@@ -291,7 +327,9 @@
             s.container.classList.add('active');
             activeSessionId = id;
             s.term.focus();
-            s.fitAddon.fit();
+
+            // Refit terminal when switching tabs
+            requestAnimationFrame(() => s.fitAddon.fit());
         }
 
         function closeSession(id) {
