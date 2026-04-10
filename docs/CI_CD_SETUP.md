@@ -1,37 +1,5 @@
 # CI/CD 配置指南
 
-## 配置 Docker Hub
-
-### 1. 获取 Docker Hub 凭证
-
-1. 登录 [Docker Hub](https://hub.docker.com/)
-2. 进入 Account Settings -> Security
-3. 创建一个新的 Access Token（推荐）或使用密码
-
-### 2. 配置 Gitea Secrets
-
-在你的 Gitea 仓库中配置以下 Secrets：
-
-**路径**：仓库设置 -> Secrets -> Actions
-
-| Secret 名称 | 说明 | 示例 |
-|------------|------|------|
-| `DOCKER_USERNAME` | Docker Hub 用户名 | `johndoe` |
-| `DOCKER_PASSWORD` | Docker Hub 密码或 Access Token | `dckr_pat_xxxx...` |
-
-### 3. 镜像命名规则
-
-推送 tag 后，Docker 镜像会自动推送到：
-```
-<DOCKER_USERNAME>/psh:<version>
-<DOCKER_USERNAME>/psh:latest
-```
-
-例如，如果你的用户名是 `johndoe`，打 tag `v1.0.0` 后会生成：
-- `johndoe/psh:1.0.0`
-- `johndoe/psh:1.0`
-- `johndoe/psh:latest`
-
 ## 发布流程
 
 ### 自动触发条件
@@ -39,7 +7,7 @@
 | 事件 | 触发的工作流 |
 |------|-------------|
 | Push to `main` | ❌ 不触发构建 |
-| Pull Request | ✅ 运行测试和代码检查 |
+| Pull Request | ✅ 运行测试和构建检查 |
 | Push tag `v*` | ✅ 完整构建、测试、发布 |
 
 ### 发布新版本
@@ -56,9 +24,8 @@ git push origin v1.0.0
 
 # 3. 等待 CI/CD 完成
 # - 构建二进制文件（4个平台）
-# - 运行测试
-# - 构建多架构 Docker 镜像
-# - 创建 GitHub Release
+# - 构建多架构 Docker 镜像 (epurs/psh)
+# - 创建 Gitea Release
 # - 上传二进制文件和校验和
 ```
 
@@ -67,66 +34,44 @@ git push origin v1.0.0
 遵循 [语义化版本](https://semver.org/lang/zh-CN/)：
 
 - `v1.0.0` - 正式版本
-- `v1.0.0-beta.1` - 预发布版本（会标记为 pre-release）
+- `v1.0.0-beta.1` - 预发布版本
 - `v1.0.0-rc.1` - 候选版本
 
-## 工作流详解
-
-### Job 依赖关系
-
-```
-┌─────────┐  ┌──────┐
-│  Build  │  │ Test │
-└────┬────┘  └──┬───┘
-     │          │
-     └──────┬───┘
-            │
-       ┌────▼────┐
-       │ Docker  │ (仅在 tag 时)
-       └────┬────┘
-            │
-       ┌────▼────┐
-       │ Release │ (仅在 tag 时)
-       └────┬────┘
-            │
-       ┌────▼────┐
-       │ Notify  │ (仅在 tag 时)
-       └─────────┘
-```
-
-### 构建产物
+## 构建产物
 
 每次 tag 发布会生成以下产物：
 
 **二进制文件**：
-- `psh-linux-amd64.tar.gz` + `.sha256`
-- `psh-linux-arm64.tar.gz` + `.sha256`
-- `psh-darwin-amd64.tar.gz` + `.sha256`
-- `psh-darwin-arm64.tar.gz` + `.sha256`
+- `psh-linux-amd64` + `.sha256`
+- `psh-linux-arm64` + `.sha256`
+- `psh-darwin-amd64` + `.sha256`
+- `psh-darwin-arm64` + `.sha256`
 
 **Docker 镜像**：
-- `<username>/psh:<version>`
-- `<username>/psh:<major>.<minor>`
-- `<username>/psh:latest`
+- `epurs/psh:<version>`
+- `epurs/psh:<major>.<minor>`
+- `epurs/psh:latest`
 
 ## 本地测试
 
 ### 测试构建
 
 ```bash
-# 测试特定平台构建
+# 本地构建
 go build -o psh ./cmd/psh
 
 # 交叉编译
 GOOS=linux GOARCH=amd64 go build -o psh-linux-amd64 ./cmd/psh
 GOOS=linux GOARCH=arm64 go build -o psh-linux-arm64 ./cmd/psh
+GOOS=darwin GOARCH=amd64 go build -o psh-darwin-amd64 ./cmd/psh
+GOOS=darwin GOARCH=arm64 go build -o psh-darwin-arm64 ./cmd/psh
 ```
 
 ### 测试 Docker 构建
 
 ```bash
-# 本地构建多架构镜像
-docker buildx build --platform linux/amd64,linux/arm64 -t yourusername/psh:test .
+# 构建镜像
+docker build -t epurs/psh:test .
 
 # 本地运行测试
 docker run -d \
@@ -134,74 +79,30 @@ docker run -d \
   -p 8443:8443 \
   -v ~/.ssh:/root/.ssh:ro \
   -e PSH_PASSWORD=test123 \
-  yourusername/psh:test
+  epurs/psh:test
+
+# 测试多架构构建
+docker buildx build --platform linux/amd64,linux/arm64 -t epurs/psh:test .
 ```
 
 ## 故障排查
 
 ### 构建失败
 
-1. **ARM64 交叉编译失败**
-   ```bash
-   # 安装交叉编译工具链
-   sudo apt-get install -y gcc-aarch64-linux-gnu
-   ```
+1. **Go 依赖下载慢**
+   - 工作流已配置 GOPROXY 镜像源
+   - 本地可设置：`export GOPROXY=https://goproxy.cn,direct`
 
 2. **Docker 推送失败**
-   - 检查 `DOCKER_USERNAME` 和 `DOCKER_PASSWORD` 是否正确
-   - 确认 Docker Hub 仓库存在或有创建权限
-   - 检查 Access Token 权限
-
-3. **Go 模块下载慢**
-   - 工作流已配置 GOPROXY 镜像源
+   - 检查 Docker Hub 凭证是否正确
+   - 确认 `epurs/psh` 仓库有推送权限
 
 ### 查看日志
 
-```bash
-# 在 Gitea Actions 页面查看详细日志
-# 或使用 CLI 查看特定 job
-gh run view <run-id>
-```
-
-## 高级配置
-
-### 自定义 Docker Registry
-
-如果需要使用其他 Docker Registry，修改 `.gitea/workflows/build.yml`：
-
-```yaml
-- name: Login to Docker Registry
-  uses: docker/login-action@v3
-  with:
-    registry: registry.example.com  # 你的私有仓库
-    username: ${{ secrets.DOCKER_USERNAME }}
-    password: ${{ secrets.DOCKER_PASSWORD }}
-
-- name: Extract Docker metadata
-  uses: docker/metadata-action@v5
-  with:
-    images: registry.example.com/${{ secrets.DOCKER_USERNAME }}/psh
-```
-
-### 添加通知
-
-在 `notify` job 中添加 Slack/Discord 通知：
-
-```yaml
-- name: Send Slack notification
-  uses: 8398a7/action-slack@v3
-  with:
-    status: ${{ job.status }}
-    text: |
-      Release ${{ steps.version.outputs.VERSION }}: ${{ steps.status.outputs.status }}
-      Docker: ${{ secrets.DOCKER_USERNAME }}/psh:${{ steps.version.outputs.VERSION }}
-  env:
-    SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
-  if: always()
-```
+在 Gitea Actions 页面查看详细日志：https://git.epurs.com/gitops/psh/actions
 
 ## 相关链接
 
-- [Docker Hub](https://hub.docker.com/)
+- [Gitea Actions 文档](https://docs.gitea.com/next/en/actions)
 - [语义化版本](https://semver.org/lang/zh-CN/)
-- [GitHub Actions 文档](https://docs.github.com/en/actions)
+- [Docker Hub](https://hub.docker.com/)
