@@ -79,7 +79,9 @@ func (l *Logger) writeEvent(event Event) error {
 	for i := 0; i < l.maxRetries; i++ {
 		_, err := l.file.Write(append(data, '\n'))
 		if err == nil {
-			l.file.Sync()
+			if syncErr := l.file.Sync(); syncErr != nil {
+				log.Debugw("Failed to sync audit log", "error", syncErr)
+			}
 			log.Debugw("Audit event logged", "type", event.Type)
 			return nil
 		}

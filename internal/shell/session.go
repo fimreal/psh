@@ -127,7 +127,9 @@ func (s *Session) loadSSHConfig() {
 			}
 		case "port":
 			if currentHost != nil {
-				fmt.Sscanf(value, "%d", &currentHost.Port)
+				if _, err := fmt.Sscanf(value, "%d", &currentHost.Port); err != nil {
+					currentHost.Port = 22
+				}
 			}
 		case "identityfile":
 			if currentHost != nil && len(parts) > 1 {
@@ -152,7 +154,9 @@ func (s *Session) Write(data []byte) error {
 
 	if s.sshClient != nil {
 		if s.sshStdin != nil {
-			s.sshStdin.Write(data)
+			if _, err := s.sshStdin.Write(data); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
@@ -278,7 +282,9 @@ func (s *Session) connectSSH(target string) {
 		}
 
 		if idx := strings.Index(host, ":"); idx > 0 {
-			fmt.Sscanf(host[idx+1:], "%d", &port)
+			if _, err := fmt.Sscanf(host[idx+1:], "%d", &port); err != nil {
+				port = 22
+			}
 			host = host[:idx]
 		}
 
@@ -389,10 +395,20 @@ func (s *Session) tryConnectWithFallback(sshUser, host string, port int, authMet
 	stdout, _ := session.StdoutPipe()
 
 	// Request PTY
-	session.RequestPty("xterm-256color", s.cols, s.rows, ssh.TerminalModes{})
+	if err := session.RequestPty("xterm-256color", s.cols, s.rows, ssh.TerminalModes{}); err != nil {
+		client.Close()
+		s.outputChan <- []byte(fmt.Sprintf("\r\nPTY request failed: %s\r\n", err))
+		s.printPrompt()
+		return
+	}
 
 	// Start shell
-	session.Shell()
+	if err := session.Shell(); err != nil {
+		client.Close()
+		s.outputChan <- []byte(fmt.Sprintf("\r\nShell start failed: %s\r\n", err))
+		s.printPrompt()
+		return
+	}
 
 	s.mu.Lock()
 	s.sshClient = client

@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"net/http"
 	"strings"
-	"time"
 
 	log "github.com/fimreal/goutils/ezap"
 
@@ -142,9 +141,4 @@ func encodeBase64(data []byte) string {
 // decodeBase64 decodes base64 data
 func decodeBase64(data string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(data)
-}
-
-// getMaxAge returns the max age for cookie in seconds
-func getMaxAge(expire int) int {
-	return int(time.Duration(expire) * time.Second / time.Second)
 }

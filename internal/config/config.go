@@ -47,15 +47,15 @@ func Load() (*Config, error) {
 	flags.BoolVar(&cfg.Debug, "debug", false, "Enable debug logging")
 
 	// Bind environment variables
-	viper.BindEnv("host", "PSH_HOST")
-	viper.BindEnv("port", "PSH_PORT")
-	viper.BindEnv("audit-log", "PSH_AUDIT_LOG")
-	viper.BindEnv("tls-cert", "PSH_TLS_CERT")
-	viper.BindEnv("tls-key", "PSH_TLS_KEY")
-	viper.BindEnv("auto-certs", "PSH_AUTO_CERTS")
-	viper.BindEnv("jwt-secret", "PSH_JWT_SECRET")
-	viper.BindEnv("jwt-expire", "PSH_JWT_EXPIRE")
-	viper.BindEnv("password", "PSH_PASSWORD")
+	_ = viper.BindEnv("host", "PSH_HOST")
+	_ = viper.BindEnv("port", "PSH_PORT")
+	_ = viper.BindEnv("audit-log", "PSH_AUDIT_LOG")
+	_ = viper.BindEnv("tls-cert", "PSH_TLS_CERT")
+	_ = viper.BindEnv("tls-key", "PSH_TLS_KEY")
+	_ = viper.BindEnv("auto-certs", "PSH_AUTO_CERTS")
+	_ = viper.BindEnv("jwt-secret", "PSH_JWT_SECRET")
+	_ = viper.BindEnv("jwt-expire", "PSH_JWT_EXPIRE")
+	_ = viper.BindEnv("password", "PSH_PASSWORD")
 
 	// Parse flags
 	if err := rootCmd.Execute(); err != nil {
@@ -93,7 +93,7 @@ func Load() (*Config, error) {
 
 	// Validate required fields
 	if cfg.Password == "" {
-		rootCmd.Help()
+		_ = rootCmd.Help()
 		os.Exit(1)
 	}
 

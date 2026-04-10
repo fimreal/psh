@@ -83,7 +83,9 @@ func (c *WSClient) handleMessages(auditLogger *audit.Logger) {
 	})
 
 	// Log connection
-	auditLogger.LogConnection(c.sessionID, "webshell", "")
+	if err := auditLogger.LogConnection(c.sessionID, "webshell", ""); err != nil {
+		log.Warnw("Failed to log connection", "error", err)
+	}
 
 	// Start output reader goroutine
 	go c.readOutput()
@@ -102,7 +104,9 @@ func (c *WSClient) handleMessages(auditLogger *audit.Logger) {
 		if err := json.Unmarshal(message, &msg); err != nil {
 			// If not JSON, send as raw input
 			if c.session != nil {
-				c.session.Write(message)
+				if writeErr := c.session.Write(message); writeErr != nil {
+					log.Warnw("Failed to write to session", "error", writeErr)
+				}
 			}
 			continue
 		}
@@ -117,7 +121,9 @@ func (c *WSClient) handleMessages(auditLogger *audit.Logger) {
 
 	// Cleanup
 	c.session.Close()
-	auditLogger.LogDisconnection(c.sessionID, "webshell")
+	if err := auditLogger.LogDisconnection(c.sessionID, "webshell"); err != nil {
+		log.Warnw("Failed to log disconnection", "error", err)
+	}
 	log.Infow("WebSocket session ended", "session", c.sessionID)
 }
 
@@ -192,12 +198,7 @@ func (c *WSClient) sendMessage(msg WSResponse) {
 		return
 	}
 
-	c.conn.WriteMessage(websocket.TextMessage, data)
-}
-
-func (c *WSClient) sendError(msg string) {
-	c.sendMessage(WSResponse{
-		Type:    "error",
-		Message: msg,
-	})
+	if err := c.conn.WriteMessage(websocket.TextMessage, data); err != nil {
+		log.Warnw("Failed to send WebSocket message", "error", err)
+	}
 }

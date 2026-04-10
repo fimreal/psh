@@ -25,7 +25,9 @@ func NewService(jwtSecret string, jwtExpire int, password string) *Service {
 	if secret == "" {
 		// Generate cryptographically secure random secret
 		bytes := make([]byte, 32)
-		rand.Read(bytes)
+		if _, err := rand.Read(bytes); err != nil {
+			panic("failed to generate random secret: " + err.Error())
+		}
 		secret = hex.EncodeToString(bytes)
 	}
 
