@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rs/zerolog/log"
+	log "github.com/fimreal/goutils/ezap"
 )
 
 type EventType string
@@ -46,7 +46,7 @@ func NewLogger(path string) (*Logger, error) {
 		return nil, err
 	}
 
-	log.Info().Str("path", path).Msg("Audit logger initialized")
+	log.Infow("Audit logger initialized", "path", path)
 
 	return &Logger{
 		path:       path,
@@ -80,7 +80,7 @@ func (l *Logger) writeEvent(event Event) error {
 		_, err := l.file.Write(append(data, '\n'))
 		if err == nil {
 			l.file.Sync()
-			log.Debug().Str("type", string(event.Type)).Msg("Audit event logged")
+			log.Debugw("Audit event logged", "type", event.Type)
 			return nil
 		}
 		lastErr = err
@@ -91,11 +91,7 @@ func (l *Logger) writeEvent(event Event) error {
 }
 
 func (l *Logger) LogConnection(sessionID, host, user string) error {
-	log.Info().
-		Str("session", sessionID).
-		Str("host", host).
-		Str("user", user).
-		Msg("Audit: Connection")
+	log.Infow("Audit: Connection", "session", sessionID, "host", host, "user", user)
 
 	return l.writeEvent(Event{
 		Type:      EventConnection,
@@ -106,10 +102,7 @@ func (l *Logger) LogConnection(sessionID, host, user string) error {
 }
 
 func (l *Logger) LogDisconnection(sessionID, host string) error {
-	log.Info().
-		Str("session", sessionID).
-		Str("host", host).
-		Msg("Audit: Disconnection")
+	log.Infow("Audit: Disconnection", "session", sessionID, "host", host)
 
 	return l.writeEvent(Event{
 		Type:      EventDisconnection,

@@ -10,12 +10,13 @@ import (
 	"syscall"
 	"time"
 
+	log "github.com/fimreal/goutils/ezap"
+
 	"github.com/fimreal/psh/internal/audit"
 	"github.com/fimreal/psh/internal/auth"
 	"github.com/fimreal/psh/internal/config"
 	tlspkg "github.com/fimreal/psh/pkg/tls"
 	"github.com/gin-gonic/gin"
-	"github.com/rs/zerolog/log"
 )
 
 type Server struct {
@@ -28,14 +29,14 @@ type Server struct {
 func New(cfg *config.Config) (*Server, error) {
 	// Initialize auth service
 	authService := auth.NewService(cfg.JWTSecret, cfg.JWTExpire, cfg.Password)
-	log.Info().Msg("Auth service initialized")
+	log.Info("Auth service initialized")
 
 	// Initialize audit logger
 	auditLogger, err := audit.NewLogger(cfg.AuditLogPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize audit logger: %w", err)
 	}
-	log.Info().Str("path", cfg.AuditLogPath).Msg("Audit logger initialized")
+	log.Infow("Audit logger initialized", "path", cfg.AuditLogPath)
 
 	// Create handler
 	handler := NewHandler(authService, auditLogger, cfg.JWTExpire)
@@ -88,7 +89,7 @@ func (s *Server) Run() error {
 			return fmt.Errorf("failed to load TLS certificate: %w", err)
 		}
 		tlsConfig = &tls.Config{Certificates: []tls.Certificate{cert}}
-		log.Info().Msg("TLS enabled with custom certificates")
+		log.Info("TLS enabled with custom certificates")
 	} else if s.cfg.AutoGenerateCerts {
 		cert, err := tlspkg.GenerateSelfSigned()
 		if err != nil {
@@ -100,9 +101,9 @@ func (s *Server) Run() error {
 			return fmt.Errorf("failed to create key pair: %w", err)
 		}
 		tlsConfig = &tls.Config{Certificates: []tls.Certificate{keyPair}}
-		log.Info().Msg("TLS enabled with self-signed certificates")
+		log.Info("TLS enabled with self-signed certificates")
 	} else {
-		log.Warn().Msg("TLS not configured - running in HTTP mode (not recommended)")
+		log.Warn("TLS not configured - running in HTTP mode (not recommended)")
 	}
 
 	// Start server in goroutine
@@ -110,15 +111,15 @@ func (s *Server) Run() error {
 		var err error
 		if tlsConfig != nil {
 			srv.TLSConfig = tlsConfig
-			log.Info().Str("addr", addr).Msg("Starting HTTPS server")
+			log.Infow("Starting HTTPS server", "addr", addr)
 			err = srv.ListenAndServeTLS("", "")
 		} else {
-			log.Info().Str("addr", addr).Msg("Starting HTTP server")
+			log.Infow("Starting HTTP server", "addr", addr)
 			err = srv.ListenAndServe()
 		}
 
 		if err != nil && err != http.ErrServerClosed {
-			log.Fatal().Err(err).Msg("Server error")
+			log.Fatal(err)
 		}
 	}()
 
@@ -127,7 +128,7 @@ func (s *Server) Run() error {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Info().Msg("Shutting down server...")
+	log.Info("Shutting down server...")
 
 	// Graceful shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -140,6 +141,6 @@ func (s *Server) Run() error {
 	// Close audit logger
 	s.auditLogger.Close()
 
-	log.Info().Msg("Server stopped")
+	log.Info("Server stopped")
 	return nil
 }

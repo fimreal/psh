@@ -6,12 +6,13 @@ import (
 	"net/http"
 	"sync"
 
+	log "github.com/fimreal/goutils/ezap"
+
 	"github.com/fimreal/psh/internal/audit"
 	"github.com/fimreal/psh/internal/shell"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/rs/zerolog/log"
 )
 
 var upgrader = websocket.Upgrader{
@@ -45,7 +46,7 @@ func (h *Handler) TerminalWSHandler(c *gin.Context) {
 	// Validate token
 	_, err = h.authService.ValidateToken(token)
 	if err != nil {
-		log.Warn().Err(err).Msg("Invalid token for WebSocket")
+		log.Warnw("Invalid token for WebSocket", "error", err)
 		c.Status(http.StatusUnauthorized)
 		return
 	}
@@ -53,13 +54,13 @@ func (h *Handler) TerminalWSHandler(c *gin.Context) {
 	// Upgrade to WebSocket
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		log.Error().Err(err).Msg("WebSocket upgrade failed")
+		log.Errorw("WebSocket upgrade failed", "error", err)
 		return
 	}
 	defer conn.Close()
 
 	sessionID := uuid.New().String()
-	log.Info().Str("session", sessionID).Str("remote", c.ClientIP()).Msg("New WebSocket session")
+	log.Infow("New WebSocket session", "session", sessionID, "remote", c.ClientIP())
 
 	client := &WSClient{
 		conn:      conn,
@@ -92,7 +93,7 @@ func (c *WSClient) handleMessages(auditLogger *audit.Logger) {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Error().Err(err).Msg("WebSocket read error")
+				log.Errorw("WebSocket read error", "error", err)
 			}
 			break
 		}
@@ -117,7 +118,7 @@ func (c *WSClient) handleMessages(auditLogger *audit.Logger) {
 	// Cleanup
 	c.session.Close()
 	auditLogger.LogDisconnection(c.sessionID, "webshell")
-	log.Info().Str("session", c.sessionID).Msg("WebSocket session ended")
+	log.Infow("WebSocket session ended", "session", c.sessionID)
 }
 
 func (c *WSClient) handleInput(msg WSMessage) {
@@ -127,12 +128,12 @@ func (c *WSClient) handleInput(msg WSMessage) {
 
 	data, err := decodeBase64(msg.Data)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to decode base64 input")
+		log.Errorw("Failed to decode base64 input", "error", err)
 		return
 	}
 
 	if err := c.session.Write(data); err != nil {
-		log.Error().Err(err).Msg("Failed to write to shell session")
+		log.Errorw("Failed to write to shell session", "error", err)
 	}
 }
 
@@ -151,7 +152,7 @@ func (c *WSClient) handleResize(msg WSMessage) {
 	}
 
 	if err := c.session.Resize(cols, rows); err != nil {
-		log.Debug().Err(err).Msg("Failed to resize terminal")
+		log.Debugw("Failed to resize terminal", "error", err)
 	}
 }
 
@@ -166,7 +167,7 @@ func (c *WSClient) readOutput() {
 			n, err := c.session.Read(buf)
 			if err != nil {
 				if err != io.EOF {
-					log.Error().Err(err).Msg("Shell output read error")
+					log.Errorw("Shell output read error", "error", err)
 				}
 				return
 			}
@@ -187,7 +188,7 @@ func (c *WSClient) sendMessage(msg WSResponse) {
 
 	data, err := json.Marshal(msg)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to marshal WebSocket message")
+		log.Errorw("Failed to marshal WebSocket message", "error", err)
 		return
 	}
 

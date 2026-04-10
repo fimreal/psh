@@ -6,10 +6,11 @@ import (
 	"strings"
 	"time"
 
+	log "github.com/fimreal/goutils/ezap"
+
 	"github.com/fimreal/psh/internal/audit"
 	"github.com/fimreal/psh/internal/auth"
 	"github.com/gin-gonic/gin"
-	"github.com/rs/zerolog/log"
 )
 
 type Handler struct {
@@ -104,7 +105,7 @@ func (h *Handler) LoginHandler(c *gin.Context) {
 
 	token, err := h.authService.GenerateToken()
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to generate token")
+		log.Errorw("Failed to generate token", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 		return
 	}
