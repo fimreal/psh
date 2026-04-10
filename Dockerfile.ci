@@ -3,13 +3,15 @@
 # Usage: docker build -f Dockerfile.ci --build-arg TARGETARCH=amd64 .
 
 ARG TARGETARCH=amd64
-FROM alpine:3.19
+FROM debian:bookworm-slim
 
 # Install runtime dependencies
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     tzdata \
-    bash
+    bash \
+    openssl \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
