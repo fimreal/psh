@@ -18,8 +18,8 @@ jobs:
     container: golang:${{ env.GO_VERSION }}-alpine
     if: github.event_name == 'pull_request'
     steps:
-      - name: Install git
-        run: apk add --no-cache git
+      - name: Install git and node
+        run: apk add --no-cache git nodejs
 
       - uses: actions/checkout@v6
 
@@ -33,7 +33,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Install dependencies
-        run: apk add --no-cache git ca-certificates
+        run: apk add --no-cache git nodejs ca-certificates
 
       - uses: actions/checkout@v6
 
