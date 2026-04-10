@@ -210,14 +210,14 @@ jobs:
           DOCKER_USER="${{ secrets.DOCKER_USERNAME }}"
 
           # Create manifest for version tag
-          docker manifest create ${DOCKER_USER}/psh:${VERSION} \
+          docker manifest create --amend --insecure ${DOCKER_USER}/psh:${VERSION} \
             ${DOCKER_USER}/psh:${VERSION}-amd64 \
             ${DOCKER_USER}/psh:${VERSION}-arm64
           docker manifest push ${DOCKER_USER}/psh:${VERSION}
 
           # Create manifest for latest (only if not prerelease)
           if [[ ! "$VERSION" =~ - ]]; then
-            docker manifest create ${DOCKER_USER}/psh:latest \
+            docker manifest create --amend --insecure ${DOCKER_USER}/psh:latest \
               ${DOCKER_USER}/psh:${VERSION}-amd64 \
               ${DOCKER_USER}/psh:${VERSION}-arm64
             docker manifest push ${DOCKER_USER}/psh:latest
