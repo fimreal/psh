@@ -57,7 +57,11 @@ func (h *Handler) TerminalWSHandler(c *gin.Context) {
 		log.Errorw("WebSocket upgrade failed", "error", err)
 		return
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			log.Warnw("Failed to close WebSocket connection", "error", err)
+		}
+	}()
 
 	sessionID := uuid.New().String()
 	log.Infow("New WebSocket session", "session", sessionID, "remote", c.ClientIP())
@@ -120,7 +124,9 @@ func (c *WSClient) handleMessages(auditLogger *audit.Logger) {
 	}
 
 	// Cleanup
-	c.session.Close()
+	if err := c.session.Close(); err != nil {
+		log.Debugw("Failed to close session", "error", err)
+	}
 	if err := auditLogger.LogDisconnection(c.sessionID, "webshell"); err != nil {
 		log.Warnw("Failed to log disconnection", "error", err)
 	}

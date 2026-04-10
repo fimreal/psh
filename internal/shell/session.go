@@ -88,7 +88,7 @@ func (s *Session) loadSSHConfig() {
 	if err != nil {
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var currentHost *HostConfig
 
@@ -261,7 +261,7 @@ func (s *Session) showHelp() {
 
 func (s *Session) connectSSH(target string) {
 	var sshUser, host string
-	var port int = 22
+	var port = 22
 	var identityFile string
 
 	// Check if target is a host alias from config
@@ -385,7 +385,7 @@ func (s *Session) tryConnectWithFallback(sshUser, host string, port int, authMet
 	// Create session
 	session, err := client.NewSession()
 	if err != nil {
-		client.Close()
+		_ = client.Close()
 		s.outputChan <- []byte(fmt.Sprintf("\r\nSession error: %s\r\n", err))
 		s.printPrompt()
 		return
@@ -396,7 +396,7 @@ func (s *Session) tryConnectWithFallback(sshUser, host string, port int, authMet
 
 	// Request PTY
 	if err := session.RequestPty("xterm-256color", s.cols, s.rows, ssh.TerminalModes{}); err != nil {
-		client.Close()
+		_ = client.Close()
 		s.outputChan <- []byte(fmt.Sprintf("\r\nPTY request failed: %s\r\n", err))
 		s.printPrompt()
 		return
@@ -404,7 +404,7 @@ func (s *Session) tryConnectWithFallback(sshUser, host string, port int, authMet
 
 	// Start shell
 	if err := session.Shell(); err != nil {
-		client.Close()
+		_ = client.Close()
 		s.outputChan <- []byte(fmt.Sprintf("\r\nShell start failed: %s\r\n", err))
 		s.printPrompt()
 		return
@@ -451,11 +451,11 @@ func (s *Session) disconnectSSH() {
 	defer s.mu.Unlock()
 
 	if s.sshSess != nil {
-		s.sshSess.Close()
+		_ = s.sshSess.Close()
 		s.sshSess = nil
 	}
 	if s.sshClient != nil {
-		s.sshClient.Close()
+		_ = s.sshClient.Close()
 		s.sshClient = nil
 	}
 	s.sshStdin = nil
@@ -517,13 +517,15 @@ func (s *Session) addHostKey(hostname string, key ssh.PublicKey, knownHostsPath 
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	keyType := key.Type()
 	keyBytes := key.Marshal()
 	line := fmt.Sprintf("%s %s %s", hostname, keyType, base64.StdEncoding.EncodeToString(keyBytes))
-	fmt.Fprintln(f, line)
-	return nil
+	_, err = fmt.Fprintln(f, line)
+	return err
 }
 
 func (s *Session) printPrompt() {

@@ -139,7 +139,9 @@ func (s *Server) Run() error {
 	}
 
 	// Close audit logger
-	s.auditLogger.Close()
+	if err := s.auditLogger.Close(); err != nil {
+		log.Warnw("Failed to close audit logger", "error", err)
+	}
 
 	log.Info("Server stopped")
 	return nil
