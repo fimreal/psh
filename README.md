@@ -2,7 +2,7 @@
 
 [![Build Status](https://git.epurs.com/gitops/psh/actions/workflows/build.yml/badge.svg?branch=main)](https://git.epurs.com/gitops/psh/actions)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Docker](https://img.shields.io/docker/v/fimreal/psh/latest?label=docker)](https://hub.docker.com/r/fimreal/psh)
+[![Docker](https://img.shields.io/docker/v/epurs/psh/latest?label=docker)](https://hub.docker.com/r/epurs/psh)
 
 > 🚀 浏览器 SSH 跳板机 - 在受限网络中通过 Web 安全连接 SSH 服务器
 
@@ -31,7 +31,7 @@ docker run -d \
   -p 8443:8443 \
   -v ~/.ssh:/root/.ssh:ro \
   -e PSH_PASSWORD=your-secure-password \
-  fimreal/psh:latest
+  epurs/psh:latest
 ```
 
 访问 https://localhost:8443 并使用设置的密码登录。
@@ -55,7 +55,7 @@ PSH_PASSWORD=your-password psh
 ```yaml
 services:
   psh:
-    image: fimreal/psh:latest
+    image: epurs/psh:latest
     container_name: psh
     restart: unless-stopped
     ports:
@@ -138,7 +138,7 @@ docker run -d \
   -e PSH_TLS_CERT=/etc/psh/cert.pem \
   -e PSH_TLS_KEY=/etc/psh/key.pem \
   -e PSH_AUTO_CERTS=false \
-  fimreal/psh:latest
+  epurs/psh:latest
 ```
 
 ### 审计日志

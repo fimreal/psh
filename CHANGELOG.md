@@ -39,5 +39,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - No external C dependencies
 - Cross-platform support
 
-[Unreleased]: https://github.com/your-org/psh/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/your-org/psh/releases/tag/v0.1.0
+[Unreleased]: https://git.epurs.com/gitops/psh/compare/v0.1.0...HEAD
+[0.1.0]: https://git.epurs.com/gitops/psh/releases/tag/v0.1.0
