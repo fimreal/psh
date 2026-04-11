@@ -93,10 +93,10 @@ func (h *Handler) TerminalWSHandler(c *gin.Context) {
 	}()
 
 	// Set read deadline and pong handler
-	conn.SetReadDeadline(time.Now().Add(pongWait))
+	_ = conn.SetReadDeadline(time.Now().Add(pongWait))
 	conn.SetReadLimit(maxMessageSize)
 	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(pongWait))
+		_ = conn.SetReadDeadline(time.Now().Add(pongWait))
 		return nil
 	})
 
@@ -213,7 +213,9 @@ func (c *WSClient) processInput(data []byte) {
 				// Trim leading/trailing whitespace
 				cmd = trimCommand(cmd)
 				if cmd != "" {
-					c.auditLogger.LogCommand(c.sessionID, c.host, cmd)
+					if err := c.auditLogger.LogCommand(c.sessionID, c.host, cmd); err != nil {
+						log.Warnw("Failed to log command", "error", err)
+					}
 				}
 				c.commandBuf = c.commandBuf[:0] // Reset buffer
 			}
@@ -299,7 +301,7 @@ func (c *WSClient) sendMessage(msg WSResponse) {
 		return
 	}
 
-	c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+	_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 	if err := c.conn.WriteMessage(websocket.TextMessage, data); err != nil {
 		log.Warnw("Failed to send WebSocket message", "error", err)
 	}
@@ -316,7 +318,7 @@ func (c *WSClient) pingLoop() {
 			return
 		case <-ticker.C:
 			c.mu.Lock()
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			err := c.conn.WriteMessage(websocket.PingMessage, nil)
 			c.mu.Unlock()
 			if err != nil {
