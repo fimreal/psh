@@ -24,6 +24,16 @@
             gap: 10px;
         }
         .logo { font-size: 18px; font-weight: bold; color: #007acc; }
+        .settings-btn {
+            background: #3c3c3c;
+            border: 1px solid #3e3e42;
+            color: #d4d4d4;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .settings-btn:hover { background: #4e4e52; }
         .tab-bar { display: flex; gap: 2px; flex: 1; margin-left: 20px; }
         .tab {
             background: #2d2d30;
@@ -91,12 +101,17 @@
         .status-bar { background: #007acc; color: white; padding: 5px 20px; font-size: 12px; display: flex; justify-content: space-between; }
         .hidden { display: none !important; }
         .error-msg { color: #f14c4c; font-size: 13px; margin-top: 10px; }
+        .settings-dialog { min-width: 400px; }
+        .font-size-control { display: flex; align-items: center; gap: 15px; }
+        .font-size-input { width: 80px; text-align: center; }
+        .font-size-slider { flex: 1; }
     </style>
 </head>
 <body>
     <div class="header">
         <div class="logo">psh</div>
         <div class="tab-bar" id="tabBar"></div>
+        <button class="settings-btn" id="settingsBtn">Settings</button>
         <button class="add-tab" id="addTabBtn" title="New Terminal">+</button>
     </div>
 
@@ -129,6 +144,21 @@
         <div class="error-msg hidden" id="loginError"></div>
     </div>
 
+    <div class="dialog hidden settings-dialog" id="settingsDialog">
+        <div class="dialog-title">Settings</div>
+        <div class="form-group">
+            <label class="form-label">Font Size</label>
+            <div class="font-size-control">
+                <input type="range" class="font-size-slider" id="fontSizeSlider" min="8" max="32" value="14">
+                <input type="number" class="form-input font-size-input" id="fontSizeInput" min="8" max="32" value="14">
+            </div>
+        </div>
+        <div class="button-group">
+            <button class="btn btn-primary" id="settingsSaveBtn">Save</button>
+            <button class="btn" id="settingsCancelBtn" style="background: #3c3c3c; color: #d4d4d4;">Cancel</button>
+        </div>
+    </div>
+
     <script type="module">
         import { Terminal } from '/static/xterm/xterm.esm.js';
         import { FitAddon } from '/static/xterm/xterm-addon-fit.esm.js';
@@ -138,6 +168,30 @@
         const sessions = new Map();
         let activeSessionId = null;
         let sessionCount = 0;
+        let currentFontSize = parseInt(localStorage.getItem('psh_fontSize') || '14');
+
+        function applyFontSize(size) {
+            currentFontSize = size;
+            localStorage.setItem('psh_fontSize', size);
+            sessions.forEach(s => {
+                s.term.options.fontSize = size;
+                s.fitAddon.fit();
+            });
+        }
+
+        function openSettings() {
+            $('fontSizeSlider').value = currentFontSize;
+            $('fontSizeInput').value = currentFontSize;
+            $('settingsDialog').classList.remove('hidden');
+            $('overlay').classList.add('active');
+        }
+
+        function closeSettings() {
+            $('settingsDialog').classList.add('hidden');
+            if ($('loginDialog').classList.contains('hidden')) {
+                $('overlay').classList.remove('active');
+            }
+        }
 
         function escapeHtml(text) {
             const div = document.createElement('div');
@@ -149,6 +203,21 @@
             $('addTabBtn').onclick = () => createSession();
             $('loginBtn').onclick = handleLogin;
             $('loginPassword').onkeypress = e => { if (e.key === 'Enter') handleLogin(); };
+            $('settingsBtn').onclick = openSettings;
+            $('settingsSaveBtn').onclick = () => {
+                applyFontSize(parseInt($('fontSizeInput').value));
+                closeSettings();
+            };
+            $('settingsCancelBtn').onclick = closeSettings;
+            $('fontSizeSlider').oninput = e => {
+                $('fontSizeInput').value = e.target.value;
+            };
+            $('fontSizeInput').oninput = e => {
+                let val = parseInt(e.target.value);
+                if (val >= 8 && val <= 32) {
+                    $('fontSizeSlider').value = val;
+                }
+            };
 
             // Test auth
             const res = await fetch('/api/auth/login', {
@@ -216,7 +285,7 @@
                     cursor: '#ffffff'
                 },
                 fontFamily: 'Menlo, Monaco, monospace',
-                fontSize: 14,
+                fontSize: currentFontSize,
                 cursorBlink: true,
                 scrollback: 10000
             });
