@@ -184,6 +184,23 @@ func (h *Handler) LogoutHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
 }
 
+// VerifyHandler checks if the user is authenticated
+func (h *Handler) VerifyHandler(c *gin.Context) {
+	token, err := c.Cookie("psh_token")
+	if err != nil || token == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"authenticated": false})
+		return
+	}
+
+	_, err = h.authService.ValidateToken(token)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"authenticated": false})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"authenticated": true})
+}
+
 // WSMessage represents a WebSocket message
 type WSMessage struct {
 	Type string `json:"type"`

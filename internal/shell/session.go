@@ -49,6 +49,11 @@ type Session struct {
 
 	// SSH blacklist
 	sshBlacklist []*net.IPNet
+
+	// Command history
+	cmdHistory  []string
+	historyIdx  int
+	savedLine   string // line saved before browsing history
 }
 
 // NewSession creates a restricted shell session
@@ -224,11 +229,44 @@ func (s *Session) Write(data []byte) error {
 		return nil
 	}
 
+	// Handle arrow keys for command history
+	if len(data) == 3 && data[0] == 0x1b && data[1] == '[' {
+		switch data[2] {
+		case 'A': // Up arrow
+			s.navigateHistory(-1)
+			return nil
+		case 'B': // Down arrow
+			s.navigateHistory(1)
+			return nil
+		case 'C': // Right arrow - move cursor right
+			if s.lineBuf.Len() > 0 {
+				s.outputChan <- []byte("\x1b[C")
+			}
+			return nil
+		case 'D': // Left arrow - move cursor left
+			if s.lineBuf.Len() > 0 {
+				s.outputChan <- []byte("\x1b[D")
+			}
+			return nil
+		}
+	}
+	// Other escape sequences (ESC key, etc.)
+	if len(data) >= 1 && data[0] == 0x1b {
+		return nil
+	}
+
 	for _, b := range data {
 		if b == '\n' || b == '\r' {
 			cmd := strings.TrimSpace(s.lineBuf.String())
 			s.lineBuf.Reset()
+			// Reset history index and save command
+			s.historyIdx = len(s.cmdHistory)
+			s.savedLine = ""
 			if cmd != "" {
+				// Add to history if different from last command
+				if len(s.cmdHistory) == 0 || s.cmdHistory[len(s.cmdHistory)-1] != cmd {
+					s.cmdHistory = append(s.cmdHistory, cmd)
+				}
 				go s.executeCommand(cmd)
 			} else {
 				s.printPrompt()
@@ -245,6 +283,56 @@ func (s *Session) Write(data []byte) error {
 	}
 
 	return nil
+}
+
+// navigateHistory handles up/down arrow key navigation through command history
+func (s *Session) navigateHistory(direction int) {
+	if len(s.cmdHistory) == 0 {
+		return
+	}
+
+	// Save current line when first navigating
+	if s.historyIdx == len(s.cmdHistory) {
+		s.savedLine = s.lineBuf.String()
+	}
+
+	// Calculate new index
+	newIdx := s.historyIdx + direction
+	if newIdx < 0 {
+		newIdx = 0
+	} else if newIdx > len(s.cmdHistory) {
+		newIdx = len(s.cmdHistory)
+	}
+
+	// If no change, return
+	if newIdx == s.historyIdx {
+		return
+	}
+
+	s.historyIdx = newIdx
+
+	// Clear current line
+	currentLen := s.lineBuf.Len()
+	if currentLen > 0 {
+		clearSeq := make([]byte, currentLen)
+		for i := range clearSeq {
+			clearSeq[i] = '\b'
+		}
+		s.outputChan <- clearSeq
+		s.outputChan <- []byte("\x1b[K") // Clear to end of line
+	}
+
+	// Set new content
+	var newContent string
+	if newIdx == len(s.cmdHistory) {
+		newContent = s.savedLine
+	} else {
+		newContent = s.cmdHistory[newIdx]
+	}
+
+	s.lineBuf.Reset()
+	s.lineBuf.WriteString(newContent)
+	s.outputChan <- []byte(newContent)
 }
 
 func (s *Session) executeCommand(cmd string) {

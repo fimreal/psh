@@ -12,6 +12,8 @@
             background: #1e1e1e;
             color: #d4d4d4;
             height: 100vh;
+            height: 100dvh;
+            height: calc(var(--vh, 1vh) * 100);
             display: flex;
             flex-direction: column;
         }
@@ -24,15 +26,19 @@
             gap: 10px;
         }
         .logo { font-size: 16px; font-weight: bold; color: #007acc; white-space: nowrap; }
-        .tab-bar { display: flex; gap: 2px; flex: 1; margin-left: 10px; min-width: 0; overflow-x: auto; }
-        .tab { flex-shrink: 0; }
-        @media (max-width: 600px) {
-            .header { padding: 8px; gap: 6px; }
-            .logo { font-size: 14px; }
-            .tab { padding: 6px 10px; min-width: 60px; max-width: 100px; }
-            .tab-title { font-size: 12px; }
-            .add-tab, .settings-btn { padding: 6px 10px; font-size: 12px; }
+        .tab-bar {
+            display: flex;
+            gap: 2px;
+            flex: 1;
+            margin-left: 10px;
+            min-width: 0;
+            overflow-x: auto;
+            scroll-behavior: smooth;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
         }
+        .tab-bar::-webkit-scrollbar { display: none; }
+        .tab { flex-shrink: 0; }
         .settings-btn {
             background: #3c3c3c;
             border: 1px solid #3e3e42;
@@ -43,7 +49,6 @@
             font-size: 13px;
         }
         .settings-btn:hover { background: #4e4e52; }
-        .tab-bar { display: flex; gap: 2px; flex: 1; margin-left: 20px; }
         .tab {
             background: #2d2d30;
             border: 1px solid #3e3e42;
@@ -129,6 +134,121 @@
         .font-size-row input[type="range"] { flex: 1; }
         .font-size-row .size-label { min-width: 40px; text-align: right; font-size: 13px; }
         .header { position: relative; }
+
+        /* ========== 触摸优化 ========== */
+        button, .tab, .tab-close, .settings-btn, .add-tab {
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* ========== 平板/大手机 (max-width: 768px) ========== */
+        @media (max-width: 768px) {
+            .header { padding: 8px; gap: 8px; }
+            .tab { padding: 10px 14px; min-width: 70px; max-width: 120px; }
+            .tab-close { width: 22px; height: 22px; }
+            .dialog { min-width: 300px; padding: 24px; }
+            .dialog-title { font-size: 16px; }
+            .terminal-container { padding: 6px; }
+        }
+
+        /* ========== 小手机 (max-width: 480px) ========== */
+        @media (max-width: 480px) {
+            .header { padding: 4px 6px; gap: 4px; }
+            .logo { font-size: 12px; }
+            .tab-bar { margin-left: 4px; gap: 1px; }
+            .tab { padding: 6px 8px; min-width: 40px; max-width: 80px; }
+            .tab-title { font-size: 11px; }
+            .tab-close { width: 18px; height: 18px; font-size: 12px; }
+            .settings-btn, .add-tab { padding: 6px 8px; font-size: 12px; }
+            .dialog {
+                width: calc(100vw - 32px);
+                max-width: 350px;
+                min-width: auto;
+                padding: 20px;
+                top: 45%;
+            }
+            .form-input { font-size: 16px; padding: 10px 12px; }
+            .btn { padding: 12px 20px; font-size: 15px; }
+            .button-group { flex-direction: column; gap: 8px; }
+            .dropdown-panel {
+                right: auto;
+                left: 50%;
+                transform: translateX(-50%);
+                width: calc(100vw - 40px);
+                max-width: 220px;
+            }
+            .terminal-container { padding: 4px; }
+            .status-bar { padding: 4px 10px; font-size: 10px; }
+            #connectionInfo { max-width: 50%; overflow: hidden; text-overflow: ellipsis; }
+        }
+
+        /* ========== 极小屏幕 (max-width: 360px) ========== */
+        @media (max-width: 360px) {
+            .dialog { width: calc(100vw - 24px); padding: 16px; }
+            .tab { min-width: 40px; max-width: 70px; padding: 6px 8px; }
+            .tab-title { font-size: 10px; }
+        }
+
+        /* ========== 横屏模式 ========== */
+        @media (max-width: 768px) and (orientation: landscape) {
+            .header { padding: 4px 8px; }
+            .tab { padding: 4px 10px; }
+            .tab-title { font-size: 11px; }
+            .tab-close { width: 16px; height: 16px; }
+            .status-bar { padding: 3px 10px; font-size: 10px; }
+            .terminal-container { padding: 2px; }
+        }
+
+        /* ========== 触摸设备优化 ========== */
+        @media (hover: none) and (pointer: coarse) {
+            .tab:active { background: #4e4e52; }
+            .tab.active:active { background: #2d2d30; }
+            .settings-btn:active, .add-tab:active { background: #5e5e62; }
+            .tab-close:active { background: #a04545; }
+            .btn-primary:active { background: #004578; }
+        }
+
+        /* ========== 手机虚拟按键栏 ========== */
+        .mobile-keys {
+            display: none;
+            background: #252526;
+            border-top: 1px solid #3e3e42;
+            padding: 6px 4px;
+            gap: 4px;
+            flex-wrap: nowrap;
+            justify-content: flex-start;
+            overflow-x: auto;
+            scroll-behavior: smooth;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+        }
+        .mobile-keys::-webkit-scrollbar { display: none; }
+        .mod-key {
+            background: #3c3c3c;
+            border: 1px solid #3e3e42;
+            color: #d4d4d4;
+            padding: 8px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            min-width: 40px;
+            height: 40px;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            flex-shrink: 0;
+        }
+        .mod-key:active {
+            background: #4e4e52;
+        }
+        .mod-key.active {
+            background: #007acc;
+            border-color: #007acc;
+        }
+        /* 触摸设备显示虚拟按键栏 */
+        @media (pointer: coarse) {
+            .mobile-keys {
+                display: flex;
+            }
+        }
     </style>
 </head>
 <body>
@@ -163,6 +283,17 @@
         <span id="connectionInfo"></span>
     </div>
 
+    <div class="mobile-keys" id="mobileKeys">
+        <button class="mod-key" data-key="esc">ESC</button>
+        <button class="mod-key" data-key="tab">TAB</button>
+        <button class="mod-key" data-key="ctrl" id="ctrlKey">CTRL</button>
+        <button class="mod-key" data-key="alt" id="altKey">ALT</button>
+        <button class="mod-key" data-key="arrow-left">◀</button>
+        <button class="mod-key" data-key="arrow-up">▲</button>
+        <button class="mod-key" data-key="arrow-down">▼</button>
+        <button class="mod-key" data-key="arrow-right">▶</button>
+    </div>
+
     <div class="overlay" id="overlay"></div>
 
     <div class="dialog hidden" id="loginDialog">
@@ -187,6 +318,86 @@
         let activeSessionId = null;
         let sessionCount = 0;
         let currentFontSize = parseInt(localStorage.getItem('psh_fontSize') || '14');
+        let ctrlActive = false;
+        let altActive = false;
+
+        // 虚拟按键映射
+        const keySequences = {
+            'esc': '\x1b',
+            'tab': '\t',
+            'arrow-up': '\x1b[A',
+            'arrow-down': '\x1b[B',
+            'arrow-right': '\x1b[C',
+            'arrow-left': '\x1b[D'
+        };
+
+        function sendKeyToActiveSession(data) {
+            const s = sessions.get(activeSessionId);
+            if (s && s.ws.readyState === WebSocket.OPEN) {
+                s.ws.send(JSON.stringify({ type: 'input', data: btoa(data) }));
+            }
+        }
+
+        function resetModifiers() {
+            if (ctrlActive) {
+                ctrlActive = false;
+                $('ctrlKey').classList.remove('active');
+            }
+            if (altActive) {
+                altActive = false;
+                $('altKey').classList.remove('active');
+            }
+        }
+
+        function setupMobileKeys() {
+            const mobileKeys = $('mobileKeys');
+            // 阻止整个按键栏的触摸默认行为，防止误触
+            mobileKeys.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+            }, { passive: false });
+
+            mobileKeys.querySelectorAll('.mod-key').forEach(btn => {
+                const key = btn.dataset.key;
+
+                const handleKey = () => {
+                    if (key === 'ctrl') {
+                        ctrlActive = !ctrlActive;
+                        btn.classList.toggle('active', ctrlActive);
+                    } else if (key === 'alt') {
+                        altActive = !altActive;
+                        btn.classList.toggle('active', altActive);
+                    } else {
+                        const seq = keySequences[key];
+                        if (seq) {
+                            // ALT 组合：ESC 前缀
+                            if (altActive) {
+                                sendKeyToActiveSession('\x1b');
+                            }
+                            sendKeyToActiveSession(seq);
+                            resetModifiers();
+                        }
+                    }
+                };
+
+                // 使用 touchstart 防止虚拟键盘收起
+                btn.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleKey();
+                }, { passive: false });
+
+                // 阻止 touchend 默认行为
+                btn.addEventListener('touchend', (e) => {
+                    e.preventDefault();
+                }, { passive: false });
+
+                // 桌面端备用
+                btn.addEventListener('click', (e) => {
+                    if (key === 'ctrl' || key === 'alt') return;
+                    handleKey();
+                });
+            });
+        }
 
         function applyFontSize(size) {
             currentFontSize = size;
@@ -202,26 +413,28 @@
             });
         }
 
-        function openSettings() {
-            $('fontSizeSlider').value = currentFontSize;
-            $('fontSizeValue').textContent = currentFontSize + 'px';
-            $('settingsPanel').classList.add('active');
-        }
-
         function closeSettings() {
             $('settingsPanel').classList.remove('active');
         }
 
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-
         async function init() {
+            // 虚拟键盘适配 - 更新视口高度并触发终端 resize
+            if ('visualViewport' in window) {
+                const handleViewportChange = () => {
+                    const vh = window.visualViewport.height * 0.01;
+                    document.documentElement.style.setProperty('--vh', `${vh}px`);
+                    // 触发窗口 resize 事件，让终端重新 fit
+                    window.dispatchEvent(new Event('resize'));
+                };
+                window.visualViewport.addEventListener('resize', handleViewportChange);
+                window.visualViewport.addEventListener('scroll', handleViewportChange);
+                handleViewportChange();
+            }
+
             $('addTabBtn').onclick = () => createSession();
             $('loginBtn').onclick = handleLogin;
             $('loginPassword').onkeypress = e => { if (e.key === 'Enter') handleLogin(); };
+            setupMobileKeys();
             $('settingsBtn').onclick = e => {
                 e.stopPropagation();
                 $('settingsPanel').classList.toggle('active');
@@ -238,15 +451,11 @@
                 }
             });
 
-            // Test auth
-            const res = await fetch('/api/auth/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({ password: '' })
-            });
+            // Check if already authenticated
+            const verifyRes = await fetch('/api/auth/verify', { credentials: 'include' });
+            const verifyData = await verifyRes.json();
 
-            if (res.status === 401 || res.status === 400) {
+            if (!verifyData.authenticated) {
                 // Need login
                 $('loginDialog').classList.remove('hidden');
                 $('overlay').classList.add('active');
@@ -312,18 +521,7 @@
             const fitAddon = new FitAddon();
             term.loadAddon(fitAddon);
             term.open(container);
-
-            // Debug: Check xterm dimensions after open
-            console.log('After open:');
-            console.log('  .xterm width:', container.querySelector('.xterm')?.offsetWidth);
-            console.log('  .xterm-screen width:', container.querySelector('.xterm-screen')?.offsetWidth);
-            console.log('  .xterm-viewport width:', container.querySelector('.xterm-viewport')?.offsetWidth);
-
             fitAddon.fit();
-
-            console.log('After fit:');
-            console.log('  .xterm width:', container.querySelector('.xterm')?.offsetWidth);
-            console.log('  .xterm-screen width:', container.querySelector('.xterm-screen')?.offsetWidth);
 
             const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
             const ws = new WebSocket(`${wsProtocol}//${location.host}/ws/terminal`);
@@ -368,6 +566,23 @@
 
             term.onData(data => {
                 if (ws.readyState === WebSocket.OPEN) {
+                    // Handle virtual CTRL modifier with real keyboard input
+                    if (ctrlActive && data.length === 1 && data.charCodeAt(0) >= 97 && data.charCodeAt(0) <= 122) {
+                        // a-z converted to Ctrl+A - Ctrl+Z
+                        const ctrlChar = String.fromCharCode(data.charCodeAt(0) - 96);
+                        ws.send(JSON.stringify({ type: 'input', data: btoa(ctrlChar) }));
+                        resetModifiers();
+                        return;
+                    }
+
+                    // Handle virtual ALT modifier with real keyboard input
+                    if (altActive && data.length === 1) {
+                        // ALT + key: send ESC prefix
+                        ws.send(JSON.stringify({ type: 'input', data: btoa('\x1b' + data) }));
+                        resetModifiers();
+                        return;
+                    }
+
                     // Handle up/down arrow keys for command history
                     if (data === '\x1b[A') { // Up arrow
                         if (commandHistory.length > 0 && historyIndex < commandHistory.length - 1) {
@@ -441,10 +656,6 @@
                 resizeTimeout = setTimeout(() => {
                     fitAddon.fit();
                     const dims = fitAddon.proposeDimensions();
-                    console.log('Container:', container.offsetWidth, 'x', container.offsetHeight);
-                    console.log('.xterm:', container.querySelector('.xterm')?.offsetWidth);
-                    console.log('.xterm-screen:', container.querySelector('.xterm-screen')?.offsetWidth);
-                    console.log('Terminal:', dims);
                     if (ws.readyState === WebSocket.OPEN && dims) {
                         ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
                     }
@@ -463,6 +674,7 @@
                 }
             }
             tab.classList.add('active');
+            tab.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
             activeSessionId = id;
             term.focus();
 
@@ -482,6 +694,7 @@
             }
 
             s.tab.classList.add('active');
+            s.tab.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
             s.container.classList.add('active');
             activeSessionId = id;
             s.term.focus();

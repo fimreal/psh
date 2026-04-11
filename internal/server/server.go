@@ -79,6 +79,7 @@ func (s *Server) Run() error {
 
 	// Public routes
 	r.GET("/", s.handler.IndexHandler)
+	r.GET("/api/auth/verify", s.handler.VerifyHandler)
 	r.POST("/api/auth/login", RateLimitMiddleware(s.cfg.MaxRequestPerMin), s.handler.LoginHandler)
 	r.POST("/api/auth/logout", s.handler.LogoutHandler)
 
