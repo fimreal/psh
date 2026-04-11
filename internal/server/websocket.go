@@ -10,6 +10,7 @@ import (
 	log "github.com/fimreal/goutils/ezap"
 
 	"github.com/fimreal/psh/internal/audit"
+	"github.com/fimreal/psh/internal/auth"
 	"github.com/fimreal/psh/internal/shell"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -33,17 +34,22 @@ const (
 
 	// Send pings to peer with this period
 	pingPeriod = 30 * time.Second
+
+	// Maximum message size allowed from peer
+	maxMessageSize = 64 * 1024 // 64KB
 )
 
 type WSClient struct {
-	conn        *websocket.Conn
-	session     *shell.Session
-	sessionID   string
-	host        string
-	commandBuf  []byte
-	mu          sync.Mutex
-	auditLogger *audit.Logger
-	done        chan struct{}
+	conn           *websocket.Conn
+	session        *shell.Session
+	sessionID      string
+	host           string
+	commandBuf     []byte
+	mu             sync.Mutex
+	auditLogger    *audit.Logger
+	done           chan struct{}
+	sessionManager *auth.SessionManager
+	tokenID        string
 }
 
 // TerminalWSHandler handles WebSocket connections for terminal
@@ -60,10 +66,17 @@ func (h *Handler) TerminalWSHandler(c *gin.Context) {
 	}
 
 	// Validate token
-	_, err = h.authService.ValidateToken(token)
+	claims, err := h.authService.ValidateToken(token)
 	if err != nil {
 		log.Warnw("Invalid token for WebSocket", "error", err)
 		c.Status(http.StatusUnauthorized)
+		return
+	}
+
+	// Check session limit
+	if !h.sessionManager.CanCreateSession(claims.TokenID) {
+		log.Warnw("Session limit reached", "token_id", claims.TokenID)
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Maximum concurrent sessions reached"})
 		return
 	}
 
@@ -81,6 +94,7 @@ func (h *Handler) TerminalWSHandler(c *gin.Context) {
 
 	// Set read deadline and pong handler
 	conn.SetReadDeadline(time.Now().Add(pongWait))
+	conn.SetReadLimit(maxMessageSize)
 	conn.SetPongHandler(func(string) error {
 		conn.SetReadDeadline(time.Now().Add(pongWait))
 		return nil
@@ -91,17 +105,22 @@ func (h *Handler) TerminalWSHandler(c *gin.Context) {
 	log.Infow("New WebSocket session", "session", sessionID, "host", host, "remote", c.ClientIP())
 
 	client := &WSClient{
-		conn:        conn,
-		sessionID:   sessionID,
-		host:        host,
-		auditLogger: h.auditLogger,
-		done:        make(chan struct{}),
+		conn:           conn,
+		sessionID:      sessionID,
+		host:           host,
+		auditLogger:    h.auditLogger,
+		done:           make(chan struct{}),
+		sessionManager: h.sessionManager,
+		tokenID:        claims.TokenID,
 	}
 
 	client.handleMessages()
 }
 
 func (c *WSClient) handleMessages() {
+	// Register session
+	c.sessionManager.AddSession(c.tokenID)
+
 	// Start shell session
 	sess := shell.NewSession()
 	sess.Start()
@@ -155,6 +174,7 @@ func (c *WSClient) handleMessages() {
 
 	// Cleanup
 	close(c.done)
+	c.sessionManager.RemoveSession(c.tokenID)
 	if err := c.session.Close(); err != nil {
 		log.Debugw("Failed to close session", "error", err)
 	}

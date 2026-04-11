@@ -15,16 +15,20 @@ import (
 )
 
 type Handler struct {
-	authService *auth.Service
-	auditLogger *audit.Logger
-	jwtExpire   int
+	authService    *auth.Service
+	auditLogger    *audit.Logger
+	jwtExpire      int
+	loginLimiter   *auth.LoginLimiter
+	sessionManager *auth.SessionManager
 }
 
-func NewHandler(authService *auth.Service, auditLogger *audit.Logger, jwtExpire int) *Handler {
+func NewHandler(authService *auth.Service, auditLogger *audit.Logger, jwtExpire int, loginLimiter *auth.LoginLimiter, sessionManager *auth.SessionManager) *Handler {
 	return &Handler{
-		authService: authService,
-		auditLogger: auditLogger,
-		jwtExpire:   jwtExpire,
+		authService:    authService,
+		auditLogger:    auditLogger,
+		jwtExpire:      jwtExpire,
+		loginLimiter:   loginLimiter,
+		sessionManager: sessionManager,
 	}
 }
 
@@ -105,6 +109,18 @@ type LoginRequest struct {
 
 // LoginHandler handles authentication
 func (h *Handler) LoginHandler(c *gin.Context) {
+	clientIP := c.ClientIP()
+
+	// Check if IP is locked out
+	if h.loginLimiter.IsLocked(clientIP) {
+		remaining := h.loginLimiter.GetLockoutRemaining(clientIP)
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error":           "Too many failed attempts, please try again later",
+			"retry_after_sec": int(remaining.Seconds()),
+		})
+		return
+	}
+
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
@@ -112,9 +128,25 @@ func (h *Handler) LoginHandler(c *gin.Context) {
 	}
 
 	if !h.authService.VerifyPassword(req.Password) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid password"})
+		// Record failed attempt
+		locked := h.loginLimiter.RecordFailure(clientIP)
+		if locked {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error": "Too many failed attempts, account temporarily locked",
+			})
+			return
+		}
+
+		remaining := h.loginLimiter.GetRemainingAttempts(clientIP)
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error":             "Invalid password",
+			"attempts_remaining": remaining,
+		})
 		return
 	}
+
+	// Clear failed attempts on successful login
+	h.loginLimiter.RecordSuccess(clientIP)
 
 	token, err := h.authService.GenerateToken()
 	if err != nil {
@@ -129,6 +161,25 @@ func (h *Handler) LoginHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"expires_in": h.jwtExpire,
 	})
+}
+
+// LogoutHandler handles logout (revokes token)
+func (h *Handler) LogoutHandler(c *gin.Context) {
+	token, err := c.Cookie("psh_token")
+	if err != nil || token == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No token found"})
+		return
+	}
+
+	if err := h.authService.RevokeToken(token); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to revoke token"})
+		return
+	}
+
+	// Clear cookie
+	c.SetCookie("psh_token", "", -1, "/", "", true, true)
+
+	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
 }
 
 // WSMessage represents a WebSocket message

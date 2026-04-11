@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -12,12 +13,15 @@ import (
 
 type Claims struct {
 	jwt.RegisteredClaims
+	TokenID string `json:"jti,omitempty"`
 }
 
 type Service struct {
-	jwtSecret []byte
-	jwtExpire int
-	passwords [][]byte
+	jwtSecret  []byte
+	jwtExpire  int
+	passwords  [][]byte
+	blacklist  map[string]time.Time // tokenID -> expiry time
+	blacklistMu sync.RWMutex
 }
 
 func NewService(jwtSecret string, jwtExpire int, passwords []string) *Service {
@@ -41,6 +45,7 @@ func NewService(jwtSecret string, jwtExpire int, passwords []string) *Service {
 		jwtSecret: []byte(secret),
 		jwtExpire: jwtExpire,
 		passwords: pwBytes,
+		blacklist: make(map[string]time.Time),
 	}
 }
 
@@ -58,12 +63,18 @@ func (s *Service) VerifyPassword(password string) bool {
 // GenerateToken creates a new JWT token
 func (s *Service) GenerateToken() (string, error) {
 	now := time.Now()
+	tokenID := hex.EncodeToString(make([]byte, 16))
+	if _, err := rand.Read([]byte(tokenID)); err != nil {
+		tokenID = time.Now().String() // fallback
+	}
+
 	claims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   "user",
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(time.Duration(s.jwtExpire) * time.Second)),
 		},
+		TokenID: tokenID,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -84,8 +95,53 @@ func (s *Service) ValidateToken(tokenString string) (*Claims, error) {
 	}
 
 	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
+		// Check if token is blacklisted
+		if claims.TokenID != "" && s.isBlacklisted(claims.TokenID) {
+			return nil, errors.New("token has been revoked")
+		}
 		return claims, nil
 	}
 
 	return nil, errors.New("invalid token")
+}
+
+// RevokeToken adds a token to the blacklist
+func (s *Service) RevokeToken(tokenString string) error {
+	claims, err := s.ValidateToken(tokenString)
+	if err != nil {
+		return err
+	}
+
+	if claims.TokenID == "" {
+		return errors.New("token has no ID")
+	}
+
+	s.blacklistMu.Lock()
+	defer s.blacklistMu.Unlock()
+
+	// Store with expiry time so we can clean up later
+	s.blacklist[claims.TokenID] = time.Now().Add(time.Duration(s.jwtExpire) * time.Second)
+	return nil
+}
+
+// isBlacklisted checks if a token ID is in the blacklist
+func (s *Service) isBlacklisted(tokenID string) bool {
+	s.blacklistMu.RLock()
+	defer s.blacklistMu.RUnlock()
+
+	_, exists := s.blacklist[tokenID]
+	return exists
+}
+
+// CleanupBlacklist removes expired entries from the blacklist
+func (s *Service) CleanupBlacklist() {
+	s.blacklistMu.Lock()
+	defer s.blacklistMu.Unlock()
+
+	now := time.Now()
+	for tokenID, expiry := range s.blacklist {
+		if now.After(expiry) {
+			delete(s.blacklist, tokenID)
+		}
+	}
 }

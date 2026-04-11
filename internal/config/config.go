@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -20,6 +21,12 @@ type Config struct {
 	JWTExpire         int
 	Passwords         []string
 	Debug             bool
+
+	// Security settings
+	MaxLoginAttempts int // Max failed login attempts before lockout (default: 5)
+	LoginLockoutMins int // Lockout duration in minutes (default: 15)
+	MaxSessions      int // Max concurrent sessions per user (default: 10)
+	MaxRequestPerMin int // Max requests per minute per IP (default: 100)
 }
 
 // RunFunc is the function to run after config is loaded
@@ -65,7 +72,22 @@ func Load(run RunFunc) error {
 			}
 
 			if len(cfg.Passwords) == 0 {
-				cfg.Passwords = []string{"psh"} // Default password for convenience
+				fmt.Fprintln(os.Stderr, "Error: password is required. Use -P to specify password(s).")
+				os.Exit(1)
+			}
+
+			// Set security defaults
+			if cfg.MaxLoginAttempts == 0 {
+				cfg.MaxLoginAttempts = 5
+			}
+			if cfg.LoginLockoutMins == 0 {
+				cfg.LoginLockoutMins = 15
+			}
+			if cfg.MaxSessions == 0 {
+				cfg.MaxSessions = 10
+			}
+			if cfg.MaxRequestPerMin == 0 {
+				cfg.MaxRequestPerMin = 100
 			}
 
 			cfg.AuditLogPath = expandTilde(cfg.AuditLogPath)
@@ -90,6 +112,12 @@ func Load(run RunFunc) error {
 	flags.IntVar(&cfg.JWTExpire, "jwt-expire", 86400, "JWT token expiration time in seconds")
 	flags.StringSliceVarP(&cfg.Passwords, "password", "P", nil, "Password(s) for authentication (can be specified multiple times)")
 	flags.BoolVar(&cfg.Debug, "debug", false, "Enable debug logging")
+
+	// Security flags
+	flags.IntVar(&cfg.MaxLoginAttempts, "max-login-attempts", 5, "Max failed login attempts before lockout")
+	flags.IntVar(&cfg.LoginLockoutMins, "login-lockout-mins", 15, "Lockout duration in minutes")
+	flags.IntVar(&cfg.MaxSessions, "max-sessions", 10, "Max concurrent sessions")
+	flags.IntVar(&cfg.MaxRequestPerMin, "max-requests", 100, "Max requests per minute per IP")
 
 	viper.AutomaticEnv()
 	viper.SetEnvPrefix("PSH")

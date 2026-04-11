@@ -22,16 +22,24 @@ import (
 )
 
 type Server struct {
-	cfg         *config.Config
-	authService *auth.Service
-	auditLogger *audit.Logger
-	handler     *Handler
+	cfg            *config.Config
+	authService    *auth.Service
+	auditLogger    *audit.Logger
+	handler        *Handler
+	loginLimiter   *auth.LoginLimiter
+	sessionManager *auth.SessionManager
 }
 
 func New(cfg *config.Config) (*Server, error) {
 	// Initialize auth service
 	authService := auth.NewService(cfg.JWTSecret, cfg.JWTExpire, cfg.Passwords)
 	log.Info("Auth service initialized")
+
+	// Initialize login limiter
+	loginLimiter := auth.NewLoginLimiter(cfg.MaxLoginAttempts, cfg.LoginLockoutMins)
+
+	// Initialize session manager
+	sessionManager := auth.NewSessionManager(cfg.MaxSessions)
 
 	// Initialize audit logger
 	auditLogger, err := audit.NewLogger(cfg.AuditLogPath, audit.Level(cfg.AuditLevel))
@@ -40,13 +48,15 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	// Create handler
-	handler := NewHandler(authService, auditLogger, cfg.JWTExpire)
+	handler := NewHandler(authService, auditLogger, cfg.JWTExpire, loginLimiter, sessionManager)
 
 	return &Server{
-		cfg:         cfg,
-		authService: authService,
-		auditLogger: auditLogger,
-		handler:     handler,
+		cfg:            cfg,
+		authService:    authService,
+		auditLogger:    auditLogger,
+		handler:        handler,
+		loginLimiter:   loginLimiter,
+		sessionManager: sessionManager,
 	}, nil
 }
 
@@ -69,7 +79,8 @@ func (s *Server) Run() error {
 
 	// Public routes
 	r.GET("/", s.handler.IndexHandler)
-	r.POST("/api/auth/login", s.handler.LoginHandler)
+	r.POST("/api/auth/login", RateLimitMiddleware(s.cfg.MaxRequestPerMin), s.handler.LoginHandler)
+	r.POST("/api/auth/logout", s.handler.LogoutHandler)
 
 	// Static files
 	r.GET("/static/*path", s.handler.StaticHandler)
