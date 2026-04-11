@@ -90,6 +90,7 @@ docker-compose up -d
 | `PSH_TLS_CERT` | | - | TLS 证书路径 |
 | `PSH_TLS_KEY` | | - | TLS 私钥路径 |
 | `PSH_AUTO_CERTS` | | `true` | 自动生成自签名证书 |
+| `PSH_SSH_BLACKLIST` | | `127.0.0.0/8` | SSH 黑名单（CIDR 格式，逗号分隔） |
 
 ### SSH 配置示例
 
@@ -136,6 +137,42 @@ docker run -d \
   -e PSH_TLS_KEY=/etc/psh/key.pem \
   -e PSH_AUTO_CERTS=false \
   epurs/psh:latest
+```
+
+### SSH 黑名单
+
+出于安全考虑，默认禁止通过 psh SSH 连接到本地回环地址（`127.0.0.0/8`）。这可以防止用户通过 Web 终端访问宿主机。
+
+**自定义黑名单**
+
+```bash
+# 禁止多个网段
+docker run -d \
+  --name psh \
+  -p 8443:8443 \
+  -v ~/.ssh:/root/.ssh:ro \
+  -e PSH_PASSWORD=your-password \
+  -e PSH_SSH_BLACKLIST="127.0.0.0/8,10.0.0.0/8,192.168.0.0/16" \
+  epurs/psh:latest
+
+# 禁用黑名单（允许 SSH 到任何地址，不推荐）
+docker run -d \
+  --name psh \
+  -p 8443:8443 \
+  -v ~/.ssh:/root/.ssh:ro \
+  -e PSH_PASSWORD=your-password \
+  -e PSH_SSH_BLACKLIST="" \
+  epurs/psh:latest
+```
+
+或使用命令行参数：
+
+```bash
+# 自定义黑名单
+psh --ssh-blacklist "127.0.0.0/8,10.0.0.0/8"
+
+# 禁用黑名单
+psh --ssh-blacklist ""
 ```
 
 ### 审计日志

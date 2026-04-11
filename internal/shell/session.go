@@ -46,20 +46,58 @@ type Session struct {
 	pendingSSHHost   string
 	pendingSSHPort   int
 	pendingSigners   []ssh.Signer
+
+	// SSH blacklist
+	sshBlacklist []*net.IPNet
 }
 
 // NewSession creates a restricted shell session
-func NewSession() *Session {
+func NewSession(blacklist []string) *Session {
 	s := &Session{
-		outputChan: make(chan []byte, 256),
-		done:       make(chan struct{}),
-		lineBuf:    &bytes.Buffer{},
-		cols:       80,
-		rows:       24,
-		hosts:      make(map[string]HostConfig),
+		outputChan:   make(chan []byte, 256),
+		done:         make(chan struct{}),
+		lineBuf:      &bytes.Buffer{},
+		cols:         80,
+		rows:         24,
+		hosts:        make(map[string]HostConfig),
+		sshBlacklist: parseBlacklist(blacklist),
 	}
 	s.loadSSHConfig()
 	return s
+}
+
+// parseBlacklist converts CIDR strings to IPNet slices
+func parseBlacklist(cidrs []string) []*net.IPNet {
+	var nets []*net.IPNet
+	for _, cidr := range cidrs {
+		_, ipNet, err := net.ParseCIDR(cidr)
+		if err != nil {
+			log.Warnw("Invalid CIDR in SSH blacklist", "cidr", cidr, "error", err)
+			continue
+		}
+		nets = append(nets, ipNet)
+	}
+	return nets
+}
+
+// isBlacklisted checks if an IP address is in the blacklist
+func (s *Session) isBlacklisted(host string) bool {
+	ip := net.ParseIP(host)
+	if ip == nil {
+		// Try to resolve hostname
+		ips, err := net.LookupIP(host)
+		if err != nil || len(ips) == 0 {
+			return false
+		}
+		ip = ips[0]
+	}
+
+	for _, ipNet := range s.sshBlacklist {
+		if ipNet.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // Start begins the shell interaction
@@ -224,11 +262,12 @@ func (s *Session) executeCommand(cmd string) {
 		close(s.done)
 	case "ssh":
 		if len(parts) < 2 {
-			s.outputChan <- []byte("\r\nUsage: ssh user@host[:port] or ssh hostname\r\n")
+			s.outputChan <- []byte("\r\nUsage: ssh [user@]hostname[:port] or ssh -p port [user@]hostname\r\n")
 			s.printPrompt()
 			return
 		}
-		s.connectSSH(parts[1])
+		target, port := parseSSHArgs(parts[1:])
+		s.connectSSH(target, port)
 	case "clear":
 		s.outputChan <- []byte("\x1b[2J\x1b[H")
 		s.printPrompt()
@@ -252,12 +291,37 @@ func (s *Session) showHelp() {
 
 	s.outputChan <- []byte("Examples:\r\n")
 	s.outputChan <- []byte("  ssh root@192.168.1.1\r\n")
+	s.outputChan <- []byte("  ssh -p 2222 admin@server.com\r\n")
 	s.outputChan <- []byte("  ssh admin@server.com:2222\r\n")
 	s.outputChan <- []byte("  ssh myserver\r\n\r\n")
 	s.printPrompt()
 }
 
-func (s *Session) connectSSH(target string) {
+// parseSSHArgs parses SSH arguments and returns target and port
+// Supports: ssh user@host, ssh -p port user@host, ssh -pport user@host, ssh host, ssh -p port host
+func parseSSHArgs(args []string) (target string, port int) {
+	port = 0 // 0 means no port specified, will use default or from target
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "-p" && i+1 < len(args) {
+			// -p with space: ssh -p 2222 host
+			if p, err := fmt.Sscanf(args[i+1], "%d", &port); p != 1 || err != nil {
+				port = 0
+			}
+			i++ // skip port value
+		} else if strings.HasPrefix(arg, "-p") && len(arg) > 2 {
+			// -p without space: ssh -p2222 host
+			if p, err := fmt.Sscanf(arg[2:], "%d", &port); p != 1 || err != nil {
+				port = 0
+			}
+		} else if !strings.HasPrefix(arg, "-") {
+			target = arg
+		}
+	}
+	return target, port
+}
+
+func (s *Session) connectSSH(target string, explicitPort int) {
 	var sshUser, host string
 	port := 22
 	var identityFile string
@@ -267,6 +331,10 @@ func (s *Session) connectSSH(target string) {
 		host = hc.Hostname
 		port = hc.Port
 		identityFile = hc.IdentityFile
+		// -p parameter overrides config port
+		if explicitPort > 0 {
+			port = explicitPort
+		}
 		s.outputChan <- fmt.Appendf(nil, "\r\nConnecting to %s (%s@%s:%d)...\r\n", target, sshUser, host, port)
 	} else {
 		if idx := strings.Index(target, "@"); idx > 0 {
@@ -277,6 +345,7 @@ func (s *Session) connectSSH(target string) {
 			host = target
 		}
 
+		// Parse port from host:port format
 		if idx := strings.Index(host, ":"); idx > 0 {
 			if _, err := fmt.Sscanf(host[idx+1:], "%d", &port); err != nil {
 				port = 22
@@ -284,7 +353,19 @@ func (s *Session) connectSSH(target string) {
 			host = host[:idx]
 		}
 
+		// -p parameter overrides host:port
+		if explicitPort > 0 {
+			port = explicitPort
+		}
+
 		s.outputChan <- fmt.Appendf(nil, "\r\nConnecting to %s@%s:%d...\r\n", sshUser, host, port)
+	}
+
+	// Check if host is blacklisted
+	if s.isBlacklisted(host) {
+		s.outputChan <- []byte("Error: SSH to this address is not allowed (blacklisted)\r\n")
+		s.printPrompt()
+		return
 	}
 
 	home, _ := os.UserHomeDir()

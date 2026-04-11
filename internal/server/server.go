@@ -48,7 +48,7 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	// Create handler
-	handler := NewHandler(authService, auditLogger, cfg.JWTExpire, loginLimiter, sessionManager)
+	handler := NewHandler(authService, auditLogger, cfg.JWTExpire, loginLimiter, sessionManager, cfg.SSHBlacklist)
 
 	return &Server{
 		cfg:            cfg,

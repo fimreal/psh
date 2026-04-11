@@ -50,6 +50,7 @@ type WSClient struct {
 	done           chan struct{}
 	sessionManager *auth.SessionManager
 	tokenID        string
+	sshBlacklist   []string
 }
 
 // TerminalWSHandler handles WebSocket connections for terminal
@@ -112,6 +113,7 @@ func (h *Handler) TerminalWSHandler(c *gin.Context) {
 		done:           make(chan struct{}),
 		sessionManager: h.sessionManager,
 		tokenID:        claims.TokenID,
+		sshBlacklist:   h.sshBlacklist,
 	}
 
 	client.handleMessages()
@@ -122,7 +124,7 @@ func (c *WSClient) handleMessages() {
 	c.sessionManager.AddSession(c.tokenID)
 
 	// Start shell session
-	sess := shell.NewSession()
+	sess := shell.NewSession(c.sshBlacklist)
 	sess.Start()
 	c.session = sess
 

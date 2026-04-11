@@ -20,15 +20,17 @@ type Handler struct {
 	jwtExpire      int
 	loginLimiter   *auth.LoginLimiter
 	sessionManager *auth.SessionManager
+	sshBlacklist   []string
 }
 
-func NewHandler(authService *auth.Service, auditLogger *audit.Logger, jwtExpire int, loginLimiter *auth.LoginLimiter, sessionManager *auth.SessionManager) *Handler {
+func NewHandler(authService *auth.Service, auditLogger *audit.Logger, jwtExpire int, loginLimiter *auth.LoginLimiter, sessionManager *auth.SessionManager, sshBlacklist []string) *Handler {
 	return &Handler{
 		authService:    authService,
 		auditLogger:    auditLogger,
 		jwtExpire:      jwtExpire,
 		loginLimiter:   loginLimiter,
 		sessionManager: sessionManager,
+		sshBlacklist:   sshBlacklist,
 	}
 }
 
