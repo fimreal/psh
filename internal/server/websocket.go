@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"time"
 
 	log "github.com/fimreal/goutils/ezap"
 
@@ -23,14 +24,26 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+const (
+	// Time allowed to write a message to the peer
+	writeWait = 10 * time.Second
+
+	// Time allowed to read the next pong message from the peer
+	pongWait = 60 * time.Second
+
+	// Send pings to peer with this period
+	pingPeriod = 30 * time.Second
+)
+
 type WSClient struct {
-	conn         *websocket.Conn
-	session      *shell.Session
-	sessionID    string
-	host         string
-	commandBuf   []byte
-	mu           sync.Mutex
-	auditLogger  *audit.Logger
+	conn        *websocket.Conn
+	session     *shell.Session
+	sessionID   string
+	host        string
+	commandBuf  []byte
+	mu          sync.Mutex
+	auditLogger *audit.Logger
+	done        chan struct{}
 }
 
 // TerminalWSHandler handles WebSocket connections for terminal
@@ -66,6 +79,13 @@ func (h *Handler) TerminalWSHandler(c *gin.Context) {
 		}
 	}()
 
+	// Set read deadline and pong handler
+	conn.SetReadDeadline(time.Now().Add(pongWait))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
+
 	sessionID := uuid.New().String()
 	host := c.Query("host")
 	log.Infow("New WebSocket session", "session", sessionID, "host", host, "remote", c.ClientIP())
@@ -75,6 +95,7 @@ func (h *Handler) TerminalWSHandler(c *gin.Context) {
 		sessionID:   sessionID,
 		host:        host,
 		auditLogger: h.auditLogger,
+		done:        make(chan struct{}),
 	}
 
 	client.handleMessages()
@@ -99,6 +120,9 @@ func (c *WSClient) handleMessages() {
 
 	// Start output reader goroutine
 	go c.readOutput()
+
+	// Start ping ticker for keepalive
+	go c.pingLoop()
 
 	// Handle messages
 	for {
@@ -130,6 +154,7 @@ func (c *WSClient) handleMessages() {
 	}
 
 	// Cleanup
+	close(c.done)
 	if err := c.session.Close(); err != nil {
 		log.Debugw("Failed to close session", "error", err)
 	}
@@ -254,7 +279,30 @@ func (c *WSClient) sendMessage(msg WSResponse) {
 		return
 	}
 
+	c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 	if err := c.conn.WriteMessage(websocket.TextMessage, data); err != nil {
 		log.Warnw("Failed to send WebSocket message", "error", err)
+	}
+}
+
+// pingLoop sends periodic ping messages to keep the connection alive
+func (c *WSClient) pingLoop() {
+	ticker := time.NewTicker(pingPeriod)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.done:
+			return
+		case <-ticker.C:
+			c.mu.Lock()
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			err := c.conn.WriteMessage(websocket.PingMessage, nil)
+			c.mu.Unlock()
+			if err != nil {
+				log.Debugw("Ping failed, connection likely closed", "error", err)
+				return
+			}
+		}
 	}
 }
