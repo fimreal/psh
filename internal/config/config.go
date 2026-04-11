@@ -29,7 +29,7 @@ type Config struct {
 	MaxRequestPerMin int // Max requests per minute per IP (default: 100)
 
 	// SSH security settings
-	SSHBlacklist []string // CIDR ranges blocked from SSH (default: 127.0.0.1/8)
+	SSHBlacklist []string // CIDR ranges blocked from SSH (default: 127.0.0.0/8)
 }
 
 // RunFunc is the function to run after config is loaded
