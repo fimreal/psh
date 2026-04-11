@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"html/template"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,6 +16,7 @@ import (
 	"github.com/fimreal/psh/internal/audit"
 	"github.com/fimreal/psh/internal/auth"
 	"github.com/fimreal/psh/internal/config"
+	"github.com/fimreal/psh/static"
 	tlspkg "github.com/fimreal/psh/pkg/tls"
 	"github.com/gin-gonic/gin"
 )
@@ -58,8 +60,12 @@ func (s *Server) Run() error {
 	r := gin.New()
 	r.Use(gin.Recovery())
 
-	// Load HTML templates
-	r.LoadHTMLFiles("static/index.html")
+	// Load HTML templates from embedded FS
+	tmpl, err := template.ParseFS(static.Files, "index.html")
+	if err != nil {
+		return fmt.Errorf("failed to load template: %w", err)
+	}
+	r.SetHTMLTemplate(tmpl)
 
 	// Public routes
 	r.GET("/", s.handler.IndexHandler)

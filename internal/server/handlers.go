@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/base64"
+	"io"
 	"net/http"
 	"strings"
 
@@ -9,6 +10,7 @@ import (
 
 	"github.com/fimreal/psh/internal/audit"
 	"github.com/fimreal/psh/internal/auth"
+	"github.com/fimreal/psh/static"
 	"github.com/gin-gonic/gin"
 )
 
@@ -31,7 +33,7 @@ func (h *Handler) IndexHandler(c *gin.Context) {
 	c.HTML(http.StatusOK, "index.html", nil)
 }
 
-// StaticHandler serves static files
+// StaticHandler serves static files from embedded FS
 func (h *Handler) StaticHandler(c *gin.Context) {
 	path := c.Param("path")
 
@@ -50,8 +52,6 @@ func (h *Handler) StaticHandler(c *gin.Context) {
 		c.Status(http.StatusBadRequest)
 		return
 	}
-
-	filePath := "static/" + path
 
 	// Set MIME type based on extension
 	ext := ""
@@ -79,10 +79,24 @@ func (h *Handler) StaticHandler(c *gin.Context) {
 		mimeType = "font/woff2"
 	}
 
+	// Read file from embedded FS
+	file, err := static.Files.Open(path)
+	if err != nil {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	defer file.Close()
+
 	c.Header("Content-Type", mimeType)
 	c.Header("X-Content-Type-Options", "nosniff")
 	c.Header("Cache-Control", "public, max-age=3600")
-	c.File(filePath)
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	c.Data(http.StatusOK, mimeType, data)
 }
 
 type LoginRequest struct {

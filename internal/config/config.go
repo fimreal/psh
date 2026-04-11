@@ -22,13 +22,60 @@ type Config struct {
 	Debug             bool
 }
 
-func Load() (*Config, error) {
+// RunFunc is the function to run after config is loaded
+type RunFunc func(*Config) error
+
+func Load(run RunFunc) error {
 	var cfg Config
 
 	rootCmd := &cobra.Command{
 		Use:   "psh",
 		Short: "WebSSH Proxy Server",
-		Run:   func(cmd *cobra.Command, args []string) {},
+		Run: func(cmd *cobra.Command, args []string) {
+			// Apply viper overrides
+			if viper.IsSet("HOST") {
+				cfg.Host = viper.GetString("HOST")
+			}
+			if viper.IsSet("PORT") {
+				cfg.Port = viper.GetInt("PORT")
+			}
+			if viper.IsSet("AUDIT_LOG") {
+				cfg.AuditLogPath = viper.GetString("AUDIT_LOG")
+			}
+			if viper.IsSet("AUDIT_LEVEL") {
+				cfg.AuditLevel = viper.GetString("AUDIT_LEVEL")
+			}
+			if viper.IsSet("TLS_CERT") {
+				cfg.TLSCertPath = viper.GetString("TLS_CERT")
+			}
+			if viper.IsSet("TLS_KEY") {
+				cfg.TLSKeyPath = viper.GetString("TLS_KEY")
+			}
+			if viper.IsSet("AUTO_CERTS") {
+				cfg.AutoGenerateCerts = viper.GetBool("AUTO_CERTS")
+			}
+			if viper.IsSet("JWT_SECRET") {
+				cfg.JWTSecret = viper.GetString("JWT_SECRET")
+			}
+			if viper.IsSet("JWT_EXPIRE") {
+				cfg.JWTExpire = viper.GetInt("JWT_EXPIRE")
+			}
+			if viper.IsSet("PASSWORD") {
+				cfg.Password = viper.GetString("PASSWORD")
+			}
+
+			if cfg.Password == "" {
+				cfg.Password = "psh" // Default password for convenience
+			}
+
+			cfg.AuditLogPath = expandTilde(cfg.AuditLogPath)
+			cfg.TLSCertPath = expandTilde(cfg.TLSCertPath)
+			cfg.TLSKeyPath = expandTilde(cfg.TLSKeyPath)
+
+			if err := run(&cfg); err != nil {
+				os.Exit(1)
+			}
+		},
 	}
 
 	flags := rootCmd.Flags()
@@ -47,50 +94,7 @@ func Load() (*Config, error) {
 	viper.AutomaticEnv()
 	viper.SetEnvPrefix("PSH")
 
-	if err := rootCmd.Execute(); err != nil {
-		return nil, err
-	}
-
-	if viper.IsSet("HOST") {
-		cfg.Host = viper.GetString("HOST")
-	}
-	if viper.IsSet("PORT") {
-		cfg.Port = viper.GetInt("PORT")
-	}
-	if viper.IsSet("AUDIT_LOG") {
-		cfg.AuditLogPath = viper.GetString("AUDIT_LOG")
-	}
-	if viper.IsSet("AUDIT_LEVEL") {
-		cfg.AuditLevel = viper.GetString("AUDIT_LEVEL")
-	}
-	if viper.IsSet("TLS_CERT") {
-		cfg.TLSCertPath = viper.GetString("TLS_CERT")
-	}
-	if viper.IsSet("TLS_KEY") {
-		cfg.TLSKeyPath = viper.GetString("TLS_KEY")
-	}
-	if viper.IsSet("AUTO_CERTS") {
-		cfg.AutoGenerateCerts = viper.GetBool("AUTO_CERTS")
-	}
-	if viper.IsSet("JWT_SECRET") {
-		cfg.JWTSecret = viper.GetString("JWT_SECRET")
-	}
-	if viper.IsSet("JWT_EXPIRE") {
-		cfg.JWTExpire = viper.GetInt("JWT_EXPIRE")
-	}
-	if viper.IsSet("PASSWORD") {
-		cfg.Password = viper.GetString("PASSWORD")
-	}
-
-	if cfg.Password == "" {
-		cfg.Password = "psh" // Default password for convenience
-	}
-
-	cfg.AuditLogPath = expandTilde(cfg.AuditLogPath)
-	cfg.TLSCertPath = expandTilde(cfg.TLSCertPath)
-	cfg.TLSKeyPath = expandTilde(cfg.TLSKeyPath)
-
-	return &cfg, nil
+	return rootCmd.Execute()
 }
 
 func expandTilde(path string) string {
