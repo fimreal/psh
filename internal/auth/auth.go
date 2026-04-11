@@ -17,10 +17,10 @@ type Claims struct {
 type Service struct {
 	jwtSecret []byte
 	jwtExpire int
-	password  []byte
+	passwords [][]byte
 }
 
-func NewService(jwtSecret string, jwtExpire int, password string) *Service {
+func NewService(jwtSecret string, jwtExpire int, passwords []string) *Service {
 	secret := jwtSecret
 	if secret == "" {
 		// Generate cryptographically secure random secret
@@ -31,16 +31,28 @@ func NewService(jwtSecret string, jwtExpire int, password string) *Service {
 		secret = hex.EncodeToString(bytes)
 	}
 
+	// Convert passwords to byte slices for constant-time comparison
+	pwBytes := make([][]byte, len(passwords))
+	for i, pw := range passwords {
+		pwBytes[i] = []byte(pw)
+	}
+
 	return &Service{
 		jwtSecret: []byte(secret),
 		jwtExpire: jwtExpire,
-		password:  []byte(password),
+		passwords: pwBytes,
 	}
 }
 
-// VerifyPassword checks if the provided password matches using constant-time comparison
+// VerifyPassword checks if the provided password matches any of the configured passwords
 func (s *Service) VerifyPassword(password string) bool {
-	return subtle.ConstantTimeCompare([]byte(password), s.password) == 1
+	pwBytes := []byte(password)
+	for _, pw := range s.passwords {
+		if subtle.ConstantTimeCompare(pwBytes, pw) == 1 {
+			return true
+		}
+	}
+	return false
 }
 
 // GenerateToken creates a new JWT token

@@ -30,7 +30,7 @@ type Server struct {
 
 func New(cfg *config.Config) (*Server, error) {
 	// Initialize auth service
-	authService := auth.NewService(cfg.JWTSecret, cfg.JWTExpire, cfg.Password)
+	authService := auth.NewService(cfg.JWTSecret, cfg.JWTExpire, cfg.Passwords)
 	log.Info("Auth service initialized")
 
 	// Initialize audit logger

@@ -18,7 +18,7 @@ type Config struct {
 	AutoGenerateCerts bool
 	JWTSecret         string
 	JWTExpire         int
-	Password          string
+	Passwords         []string
 	Debug             bool
 }
 
@@ -61,11 +61,11 @@ func Load(run RunFunc) error {
 				cfg.JWTExpire = viper.GetInt("JWT_EXPIRE")
 			}
 			if viper.IsSet("PASSWORD") {
-				cfg.Password = viper.GetString("PASSWORD")
+				cfg.Passwords = viper.GetStringSlice("PASSWORD")
 			}
 
-			if cfg.Password == "" {
-				cfg.Password = "psh" // Default password for convenience
+			if len(cfg.Passwords) == 0 {
+				cfg.Passwords = []string{"psh"} // Default password for convenience
 			}
 
 			cfg.AuditLogPath = expandTilde(cfg.AuditLogPath)
@@ -88,7 +88,7 @@ func Load(run RunFunc) error {
 	flags.BoolVar(&cfg.AutoGenerateCerts, "auto-certs", true, "Auto-generate self-signed TLS certificates")
 	flags.StringVar(&cfg.JWTSecret, "jwt-secret", "", "JWT secret key (auto-generated if not provided)")
 	flags.IntVar(&cfg.JWTExpire, "jwt-expire", 86400, "JWT token expiration time in seconds")
-	flags.StringVarP(&cfg.Password, "password", "P", "", "Password for authentication (required)")
+	flags.StringSliceVarP(&cfg.Passwords, "password", "P", nil, "Password(s) for authentication (can be specified multiple times)")
 	flags.BoolVar(&cfg.Debug, "debug", false, "Enable debug logging")
 
 	viper.AutomaticEnv()
