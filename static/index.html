@@ -18,12 +18,21 @@
         .header {
             background: #252526;
             border-bottom: 1px solid #3e3e42;
-            padding: 10px 20px;
+            padding: 10px;
             display: flex;
             align-items: center;
             gap: 10px;
         }
-        .logo { font-size: 18px; font-weight: bold; color: #007acc; }
+        .logo { font-size: 16px; font-weight: bold; color: #007acc; white-space: nowrap; }
+        .tab-bar { display: flex; gap: 2px; flex: 1; margin-left: 10px; min-width: 0; overflow-x: auto; }
+        .tab { flex-shrink: 0; }
+        @media (max-width: 600px) {
+            .header { padding: 8px; gap: 6px; }
+            .logo { font-size: 14px; }
+            .tab { padding: 6px 10px; min-width: 60px; max-width: 100px; }
+            .tab-title { font-size: 12px; }
+            .add-tab, .settings-btn { padding: 6px 10px; font-size: 12px; }
+        }
         .settings-btn {
             background: #3c3c3c;
             border: 1px solid #3e3e42;
@@ -101,17 +110,41 @@
         .status-bar { background: #007acc; color: white; padding: 5px 20px; font-size: 12px; display: flex; justify-content: space-between; }
         .hidden { display: none !important; }
         .error-msg { color: #f14c4c; font-size: 13px; margin-top: 10px; }
-        .settings-dialog { min-width: 400px; }
-        .font-size-control { display: flex; align-items: center; gap: 15px; }
-        .font-size-input { width: 80px; text-align: center; }
-        .font-size-slider { flex: 1; }
+        .dropdown-panel {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: #252526;
+            border: 1px solid #3e3e42;
+            border-radius: 4px;
+            padding: 12px 16px;
+            min-width: 200px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            display: none;
+            z-index: 100;
+        }
+        .dropdown-panel.active { display: block; }
+        .dropdown-panel .panel-title { font-size: 13px; color: #888; margin-bottom: 8px; }
+        .font-size-row { display: flex; align-items: center; gap: 10px; }
+        .font-size-row input[type="range"] { flex: 1; }
+        .font-size-row .size-label { min-width: 40px; text-align: right; font-size: 13px; }
+        .header { position: relative; }
     </style>
 </head>
 <body>
     <div class="header">
         <div class="logo">psh</div>
         <div class="tab-bar" id="tabBar"></div>
-        <button class="settings-btn" id="settingsBtn">Settings</button>
+        <div style="position:relative;">
+            <button class="settings-btn" id="settingsBtn">字体</button>
+            <div class="dropdown-panel" id="settingsPanel">
+                <div class="panel-title">Font Size</div>
+                <div class="font-size-row">
+                    <input type="range" id="fontSizeSlider" min="8" max="32" value="14">
+                    <span class="size-label" id="fontSizeValue">14px</span>
+                </div>
+            </div>
+        </div>
         <button class="add-tab" id="addTabBtn" title="New Terminal">+</button>
     </div>
 
@@ -144,21 +177,6 @@
         <div class="error-msg hidden" id="loginError"></div>
     </div>
 
-    <div class="dialog hidden settings-dialog" id="settingsDialog">
-        <div class="dialog-title">Settings</div>
-        <div class="form-group">
-            <label class="form-label">Font Size</label>
-            <div class="font-size-control">
-                <input type="range" class="font-size-slider" id="fontSizeSlider" min="8" max="32" value="14">
-                <input type="number" class="form-input font-size-input" id="fontSizeInput" min="8" max="32" value="14">
-            </div>
-        </div>
-        <div class="button-group">
-            <button class="btn btn-primary" id="settingsSaveBtn">Save</button>
-            <button class="btn" id="settingsCancelBtn" style="background: #3c3c3c; color: #d4d4d4;">Cancel</button>
-        </div>
-    </div>
-
     <script type="module">
         import { Terminal } from '/static/xterm/xterm.esm.js';
         import { FitAddon } from '/static/xterm/xterm-addon-fit.esm.js';
@@ -176,21 +194,22 @@
             sessions.forEach(s => {
                 s.term.options.fontSize = size;
                 s.fitAddon.fit();
+                // Send new dimensions to backend
+                const dims = s.fitAddon.proposeDimensions();
+                if (dims && s.ws.readyState === WebSocket.OPEN) {
+                    s.ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
+                }
             });
         }
 
         function openSettings() {
             $('fontSizeSlider').value = currentFontSize;
-            $('fontSizeInput').value = currentFontSize;
-            $('settingsDialog').classList.remove('hidden');
-            $('overlay').classList.add('active');
+            $('fontSizeValue').textContent = currentFontSize + 'px';
+            $('settingsPanel').classList.add('active');
         }
 
         function closeSettings() {
-            $('settingsDialog').classList.add('hidden');
-            if ($('loginDialog').classList.contains('hidden')) {
-                $('overlay').classList.remove('active');
-            }
+            $('settingsPanel').classList.remove('active');
         }
 
         function escapeHtml(text) {
@@ -203,21 +222,21 @@
             $('addTabBtn').onclick = () => createSession();
             $('loginBtn').onclick = handleLogin;
             $('loginPassword').onkeypress = e => { if (e.key === 'Enter') handleLogin(); };
-            $('settingsBtn').onclick = openSettings;
-            $('settingsSaveBtn').onclick = () => {
-                applyFontSize(parseInt($('fontSizeInput').value));
-                closeSettings();
+            $('settingsBtn').onclick = e => {
+                e.stopPropagation();
+                $('settingsPanel').classList.toggle('active');
             };
-            $('settingsCancelBtn').onclick = closeSettings;
             $('fontSizeSlider').oninput = e => {
-                $('fontSizeInput').value = e.target.value;
+                const size = parseInt(e.target.value);
+                $('fontSizeValue').textContent = size + 'px';
+                applyFontSize(size);
             };
-            $('fontSizeInput').oninput = e => {
-                let val = parseInt(e.target.value);
-                if (val >= 8 && val <= 32) {
-                    $('fontSizeSlider').value = val;
+            // Close panel when clicking outside
+            document.addEventListener('click', e => {
+                if (!$('settingsPanel').contains(e.target) && !$('settingsBtn').contains(e.target)) {
+                    closeSettings();
                 }
-            };
+            });
 
             // Test auth
             const res = await fetch('/api/auth/login', {

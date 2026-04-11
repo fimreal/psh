@@ -545,7 +545,8 @@ func (s *Session) Resize(cols, rows int) error {
 	s.rows = rows
 
 	if s.sshSess != nil {
-		return s.sshSess.WindowChange(cols, rows)
+		// WindowChange takes (h, w) = (rows, cols)
+		return s.sshSess.WindowChange(rows, cols)
 	}
 	return nil
 }
