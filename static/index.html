@@ -69,13 +69,15 @@
         .tab-close:hover { background: #c75450; color: white; }
         .add-tab { background: #2d2d30; border: 1px solid #3e3e42; padding: 8px 12px; cursor: pointer; font-size: 16px; border-radius: 4px; color: #d4d4d4; }
         .add-tab:hover { background: #3e3e42; }
-        .content { flex: 1; position: relative; min-height: 0; }
-        .terminal-container { position: absolute; inset: 0; display: none; padding: 8px; }
+        .content { flex: 1; position: relative; min-height: 0; margin-bottom: 8px; }
+        .terminal-container { position: absolute; inset: 0; display: none; padding: 8px; overflow: hidden; }
         .terminal-container.active { display: block; }
         /* Force xterm to fill container width */
         .xterm { width: 100%; height: 100%; }
         .xterm-viewport { width: 100% !important; }
         .xterm-screen { width: 100% !important; }
+        /* Make xterm selection visible */
+        .xterm-selection { background: rgba(0, 122, 204, 0.5) !important; }
         #welcome { display: flex; align-items: center; justify-content: center; flex-direction: column; color: #666; font-size: 14px; }
         #welcome h2 { font-size: 24px; margin-bottom: 10px; color: #888; }
         #welcome p { margin-bottom: 5px; }
@@ -280,10 +282,12 @@
 
     <div class="status-bar">
         <span id="statusText">Ready</span>
+        <span id="modeText"></span>
         <span id="connectionInfo"></span>
     </div>
 
     <div class="mobile-keys" id="mobileKeys">
+        <button class="mod-key" data-key="kbd" id="kbdKey">⌨</button>
         <button class="mod-key" data-key="esc">ESC</button>
         <button class="mod-key" data-key="tab">TAB</button>
         <button class="mod-key" data-key="ctrl" id="ctrlKey">CTRL</button>
@@ -314,6 +318,16 @@
 
         const $ = id => document.getElementById(id);
 
+        // Encode string to base64 (UTF-8 safe)
+        function base64Encode(str) {
+            return btoa(unescape(encodeURIComponent(str)));
+        }
+
+        // Decode base64 to string (UTF-8 safe)
+        function base64Decode(str) {
+            return decodeURIComponent(escape(atob(str)));
+        }
+
         const sessions = new Map();
         let activeSessionId = null;
         let sessionCount = 0;
@@ -334,7 +348,7 @@
         function sendKeyToActiveSession(data) {
             const s = sessions.get(activeSessionId);
             if (s && s.ws.readyState === WebSocket.OPEN) {
-                s.ws.send(JSON.stringify({ type: 'input', data: btoa(data) }));
+                s.ws.send(JSON.stringify({ type: 'input', data: base64Encode(data) }));
             }
         }
 
@@ -366,6 +380,19 @@
                     } else if (key === 'alt') {
                         altActive = !altActive;
                         btn.classList.toggle('active', altActive);
+                    } else if (key === 'kbd') {
+                        // Toggle keyboard open/close
+                        const s = sessions.get(activeSessionId);
+                        if (s) {
+                            const textarea = s.container.querySelector('.xterm-helper-textarea');
+                            if (textarea) {
+                                if (document.activeElement === textarea) {
+                                    textarea.blur();
+                                } else {
+                                    textarea.focus();
+                                }
+                            }
+                        }
                     } else {
                         const seq = keySequences[key];
                         if (seq) {
@@ -451,6 +478,27 @@
                 }
             });
 
+            // Tab drag and drop for reordering
+            const tabBar = $('tabBar');
+            tabBar.ondragover = e => {
+                e.preventDefault();
+                const dragging = tabBar.querySelector('.dragging');
+                if (!dragging) return;
+                const afterElement = [...tabBar.querySelectorAll('.tab:not(.dragging)')].reduce((closest, child) => {
+                    const box = child.getBoundingClientRect();
+                    const offset = e.clientX - box.left - box.width / 2;
+                    if (offset < 0 && offset > closest.offset) {
+                        return { offset, element: child };
+                    }
+                    return closest;
+                }, { offset: Number.NEGATIVE_INFINITY }).element;
+                if (afterElement) {
+                    tabBar.insertBefore(dragging, afterElement);
+                } else {
+                    tabBar.appendChild(dragging);
+                }
+            };
+
             // Check if already authenticated
             const verifyRes = await fetch('/api/auth/verify', { credentials: 'include' });
             const verifyData = await verifyRes.json();
@@ -494,6 +542,20 @@
                 if (e.target.classList.contains('tab-close')) closeSession(id);
                 else switchSession(id);
             };
+            // Double-click to rename
+            tab.ondblclick = e => {
+                if (e.target.classList.contains('tab-close')) return;
+                renameTab(tab, id);
+            };
+            // Drag to reorder
+            tab.draggable = true;
+            tab.ondragstart = e => {
+                e.dataTransfer.setData('text/plain', id);
+                tab.classList.add('dragging');
+            };
+            tab.ondragend = () => {
+                tab.classList.remove('dragging');
+            };
             $('tabBar').appendChild(tab);
 
             // Create terminal container
@@ -515,13 +577,196 @@
                 fontFamily: 'Menlo, Monaco, monospace',
                 fontSize: currentFontSize,
                 cursorBlink: true,
-                scrollback: 10000
+                scrollback: 10000,
+                allowTransparency: true,
+                disableStdin: false
             });
 
             const fitAddon = new FitAddon();
             term.loadAddon(fitAddon);
             term.open(container);
             fitAddon.fit();
+
+            // Detect touch device
+            const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
+            // Only enable touch handling on touch devices
+            if (isTouchDevice) {
+                // Touch handling - two modes: scroll mode (default) and selection mode
+                let isSelectionMode = false;
+                let lastTapTime = 0;
+                let lastTapX = 0;
+                let lastTapY = 0;
+                let touchStartX = 0;
+                let touchStartY = 0;
+                let selectionStartPos = null;
+                let fingerCount = 0;
+
+            // Create context menu
+            const contextMenu = document.createElement('div');
+            contextMenu.style.cssText = 'position:fixed;background:#333;border:1px solid #555;border-radius:4px;padding:4px 0;z-index:1000;display:none;box-shadow:0 2px 8px rgba(0,0,0,0.3);min-width:80px;';
+            contextMenu.innerHTML = `
+                <div class="menu-item" data-action="copy" style="padding:10px 16px;cursor:pointer;color:#fff;font-size:14px;">复制</div>
+                <div class="menu-item" data-action="selectAll" style="padding:10px 16px;cursor:pointer;color:#fff;font-size:14px;">全选</div>
+                <div class="menu-item" data-action="paste" style="padding:10px 16px;cursor:pointer;color:#fff;font-size:14px;">粘贴</div>
+            `;
+            document.body.appendChild(contextMenu);
+
+            // Mode indicator in status bar
+            const modeText = $('modeText');
+            const showModeIndicator = () => {
+                modeText.textContent = isSelectionMode ? ' [选择模式]' : ' [滚动模式]';
+            };
+            showModeIndicator(); // Initialize
+
+            // Helper function to get cell position
+            const getCellPosition = (clientX, clientY) => {
+                const rect = container.getBoundingClientRect();
+                const dims = fitAddon.proposeDimensions();
+                if (!dims) return null;
+                const cellWidth = (rect.width - 16) / dims.cols;
+                const cellHeight = (rect.height - 16) / dims.rows;
+                const col = Math.floor((clientX - rect.left - 8) / cellWidth);
+                const row = Math.floor((clientY - rect.top - 8) / cellHeight);
+                return {
+                    col: Math.max(0, Math.min(dims.cols - 1, col)),
+                    row: Math.max(0, Math.min(dims.rows - 1, row))
+                };
+            };
+
+            contextMenu.querySelectorAll('.menu-item').forEach(item => {
+                const handleAction = () => {
+                    const action = item.dataset.action;
+                    if (action === 'copy') {
+                        const selection = term.getSelection();
+                        if (selection && navigator.clipboard) {
+                            navigator.clipboard.writeText(selection).then(() => {
+                                item.textContent = '已复制!';
+                                setTimeout(() => item.textContent = '复制', 1000);
+                            });
+                        }
+                    } else if (action === 'selectAll') {
+                        term.selectAll();
+                    } else if (action === 'paste') {
+                        const tempInput = document.createElement('input');
+                        tempInput.style.cssText = 'position:fixed;left:-1000px;top:-1000px;';
+                        document.body.appendChild(tempInput);
+                        tempInput.focus();
+                        setTimeout(() => {
+                            const pastedText = tempInput.value;
+                            if (pastedText) {
+                                sendKeyToActiveSession(pastedText);
+                            }
+                            document.body.removeChild(tempInput);
+                        }, 100);
+                        if (navigator.clipboard && navigator.clipboard.readText) {
+                            navigator.clipboard.readText().then(text => {
+                                if (text) sendKeyToActiveSession(text);
+                            }).catch(() => {});
+                        }
+                    }
+                    contextMenu.style.display = 'none';
+                };
+                item.addEventListener('click', handleAction);
+                item.addEventListener('touchend', (e) => {
+                    e.preventDefault();
+                    handleAction();
+                });
+            });
+
+            // Hide menu on tap outside
+            document.addEventListener('touchstart', (e) => {
+                if (!contextMenu.contains(e.target)) {
+                    contextMenu.style.display = 'none';
+                }
+            });
+
+            container.addEventListener('touchstart', (e) => {
+                fingerCount = e.touches.length;
+
+                // Two-finger touch - show menu
+                if (fingerCount === 2) {
+                    e.preventDefault();
+                    const centerX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+                    const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+                    contextMenu.style.left = Math.min(centerX, window.innerWidth - 100) + 'px';
+                    contextMenu.style.top = Math.min(centerY + 20, window.innerHeight - 140) + 'px';
+                    contextMenu.style.display = 'block';
+                    return;
+                }
+
+                // Single finger
+                if (fingerCount === 1) {
+                    const touch = e.touches[0];
+                    const now = Date.now();
+                    const dx = Math.abs(touch.clientX - lastTapX);
+                    const dy = Math.abs(touch.clientY - lastTapY);
+
+                    touchStartX = touch.clientX;
+                    touchStartY = touch.clientY;
+
+                    // Double tap detection - toggle mode
+                    if (now - lastTapTime < 300 && dx < 30 && dy < 30) {
+                        e.preventDefault();
+                        isSelectionMode = !isSelectionMode;
+                        showModeIndicator();
+
+                        if (!isSelectionMode) {
+                            term.clearSelection();
+                            contextMenu.style.display = 'none';
+                        }
+                        selectionStartPos = getCellPosition(touch.clientX, touch.clientY);
+                        lastTapTime = 0;
+                        return;
+                    }
+
+                    lastTapTime = now;
+                    lastTapX = touch.clientX;
+                    lastTapY = touch.clientY;
+
+                    // In selection mode - set selection start
+                    if (isSelectionMode) {
+                        selectionStartPos = getCellPosition(touch.clientX, touch.clientY);
+                    }
+                }
+            }, { passive: false });
+
+            // Right-click to show menu (desktop)
+            container.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                contextMenu.style.left = Math.min(e.clientX, window.innerWidth - 100) + 'px';
+                contextMenu.style.top = Math.min(e.clientY + 10, window.innerHeight - 140) + 'px';
+                contextMenu.style.display = 'block';
+            });
+
+            container.addEventListener('touchmove', (e) => {
+                // Only handle single finger in selection mode
+                if (e.touches.length !== 1) return;
+                if (!isSelectionMode || !selectionStartPos) return;
+
+                e.preventDefault();
+                const touch = e.touches[0];
+                const currentPos = getCellPosition(touch.clientX, touch.clientY);
+                if (currentPos) {
+                    const startCol = Math.min(selectionStartPos.col, currentPos.col);
+                    const startRow = Math.min(selectionStartPos.row, currentPos.row);
+                    const endCol = Math.max(selectionStartPos.col, currentPos.col);
+                    const endRow = Math.max(selectionStartPos.row, currentPos.row);
+
+                    if (endRow === startRow) {
+                        term.select(startCol, startRow, endCol - startCol + 1);
+                    } else {
+                        const totalCols = (endRow - startRow) * term.cols + (endCol - startCol + 1);
+                        term.select(startCol, startRow, totalCols);
+                    }
+                }
+            }, { passive: false });
+
+            container.addEventListener('touchend', (e) => {
+                // Update finger count
+                fingerCount = e.touches.length;
+            }, { passive: true });
+            } // End of isTouchDevice check
 
             const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
             const ws = new WebSocket(`${wsProtocol}//${location.host}/ws/terminal`);
@@ -538,7 +783,7 @@
                 try {
                     const msg = JSON.parse(e.data);
                     if (msg.type === 'output') {
-                        term.write(atob(msg.data));
+                        term.write(base64Decode(msg.data));
                     } else if (msg.type === 'connected') {
                         $('statusText').textContent = 'Connected';
                     } else if (msg.type === 'error') {
@@ -570,7 +815,7 @@
                     if (ctrlActive && data.length === 1 && data.charCodeAt(0) >= 97 && data.charCodeAt(0) <= 122) {
                         // a-z converted to Ctrl+A - Ctrl+Z
                         const ctrlChar = String.fromCharCode(data.charCodeAt(0) - 96);
-                        ws.send(JSON.stringify({ type: 'input', data: btoa(ctrlChar) }));
+                        ws.send(JSON.stringify({ type: 'input', data: base64Encode(ctrlChar) }));
                         resetModifiers();
                         return;
                     }
@@ -578,7 +823,7 @@
                     // Handle virtual ALT modifier with real keyboard input
                     if (altActive && data.length === 1) {
                         // ALT + key: send ESC prefix
-                        ws.send(JSON.stringify({ type: 'input', data: btoa('\x1b' + data) }));
+                        ws.send(JSON.stringify({ type: 'input', data: base64Encode('\x1b' + data) }));
                         resetModifiers();
                         return;
                     }
@@ -633,7 +878,7 @@
                         historyIndex = -1;
                     }
 
-                    ws.send(JSON.stringify({ type: 'input', data: btoa(data) }));
+                    ws.send(JSON.stringify({ type: 'input', data: base64Encode(data) }));
                 }
             });
 
@@ -646,7 +891,7 @@
                 }
                 // Then send the new text
                 seq += newText;
-                ws.send(JSON.stringify({ type: 'input', data: btoa(seq) }));
+                ws.send(JSON.stringify({ type: 'input', data: base64Encode(seq) }));
             }
 
             // Handle resize
@@ -701,6 +946,32 @@
 
             // Refit terminal when switching tabs
             requestAnimationFrame(() => s.fitAddon.fit());
+        }
+
+        function renameTab(tab, id) {
+            const titleEl = tab.querySelector('.tab-title');
+            const currentName = titleEl.textContent;
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = currentName;
+            input.style.cssText = 'background: #3c3c3c; border: 1px solid #007acc; color: #d4d4d4; font-size: 13px; padding: 2px 4px; border-radius: 2px; width: 80px;';
+            titleEl.replaceWith(input);
+            input.focus();
+            input.select();
+
+            const finish = () => {
+                const newName = input.value.trim() || currentName;
+                const newTitle = document.createElement('span');
+                newTitle.className = 'tab-title';
+                newTitle.textContent = newName;
+                input.replaceWith(newTitle);
+            };
+
+            input.onblur = finish;
+            input.onkeydown = e => {
+                if (e.key === 'Enter') input.blur();
+                else if (e.key === 'Escape') { input.value = currentName; input.blur(); }
+            };
         }
 
         function closeSession(id) {

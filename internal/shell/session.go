@@ -260,7 +260,9 @@ func (s *Session) Write(data []byte) error {
 		return nil
 	}
 
-	for _, b := range data {
+	// Process input data, handling control characters and UTF-8
+	for i := 0; i < len(data); {
+		b := data[i]
 		if b == '\n' || b == '\r' {
 			cmd := strings.TrimSpace(s.lineBuf.String())
 			s.lineBuf.Reset()
@@ -276,14 +278,45 @@ func (s *Session) Write(data []byte) error {
 			} else {
 				s.printPrompt()
 			}
+			i++
 		} else if b == 127 || b == 8 {
 			if s.lineBuf.Len() > 0 {
-				s.lineBuf.Truncate(s.lineBuf.Len() - 1)
+				// Remove last UTF-8 character (not just byte)
+				lastBytes := s.lineBuf.Bytes()
+				// Find start of last UTF-8 character
+				j := len(lastBytes) - 1
+				for j > 0 && (lastBytes[j]&0xC0) == 0x80 {
+					j--
+				}
+				s.lineBuf.Truncate(j)
 				s.outputChan <- []byte("\b \b")
 			}
-		} else if b >= 32 {
+			i++
+		} else if b >= 32 && b < 127 {
+			// ASCII printable characters
 			s.lineBuf.WriteByte(b)
 			s.outputChan <- []byte{b}
+			i++
+		} else if b >= 0x80 {
+			// UTF-8 multi-byte character: collect all bytes
+			charLen := 1
+			if b >= 0xC0 && b < 0xE0 {
+				charLen = 2
+			} else if b >= 0xE0 && b < 0xF0 {
+				charLen = 3
+			} else if b >= 0xF0 && b < 0xF8 {
+				charLen = 4
+			}
+			if i+charLen <= len(data) {
+				charBytes := data[i : i+charLen]
+				s.lineBuf.Write(charBytes)
+				s.outputChan <- charBytes
+				i += charLen
+			} else {
+				i++
+			}
+		} else {
+			i++
 		}
 	}
 
