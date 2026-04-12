@@ -63,10 +63,11 @@ func (s *Service) VerifyPassword(password string) bool {
 // GenerateToken creates a new JWT token
 func (s *Service) GenerateToken() (string, error) {
 	now := time.Now()
-	tokenID := hex.EncodeToString(make([]byte, 16))
-	if _, err := rand.Read([]byte(tokenID)); err != nil {
-		tokenID = time.Now().String() // fallback
+	tokenIDBytes := make([]byte, 16)
+	if _, err := rand.Read(tokenIDBytes); err != nil {
+		return "", err
 	}
+	tokenID := hex.EncodeToString(tokenIDBytes)
 
 	claims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{

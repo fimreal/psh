@@ -70,6 +70,19 @@ func (s *Server) Run() error {
 	r := gin.New()
 	r.Use(gin.Recovery())
 
+	// Apply security headers
+	r.Use(SecurityMiddleware())
+
+	// Apply CORS middleware (default: allow all origins)
+	origins := s.cfg.AllowedOrigins
+	if len(origins) == 0 {
+		origins = []string{"*"}
+	}
+	r.Use(CORSMiddleware(origins))
+
+	// Setup WebSocket origin validation
+	SetupWebSocketOrigins(origins)
+
 	// Load HTML templates from embedded FS
 	tmpl, err := template.ParseFS(static.Files, "index.html")
 	if err != nil {
@@ -89,7 +102,7 @@ func (s *Server) Run() error {
 	// Protected routes
 	protected := r.Group("")
 	protected.Use(AuthMiddleware(s.authService))
-	protected.GET("/ws/terminal", s.handler.TerminalWSHandler)
+	protected.GET("/ws/terminal", WSRateLimitMiddleware(s.cfg.MaxWSConnsPerMin), s.handler.TerminalWSHandler)
 
 	// Create HTTP server
 	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)

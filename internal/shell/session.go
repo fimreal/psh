@@ -213,6 +213,7 @@ func (s *Session) Write(data []byte) error {
 			if b == '\n' || b == '\r' {
 				password := s.lineBuf.String()
 				s.lineBuf.Reset()
+				s.savedLine = "" // Clear saved line to prevent password leakage
 				s.awaitingPassword = false
 				s.outputChan <- []byte("\r\n")
 				go s.connectWithPassword(password)
@@ -230,6 +231,10 @@ func (s *Session) Write(data []byte) error {
 	}
 
 	// Handle arrow keys for command history
+	// Skip history navigation during password input to prevent password leakage
+	if s.awaitingPassword {
+		return nil
+	}
 	if len(data) == 3 && data[0] == 0x1b && data[1] == '[' {
 		switch data[2] {
 		case 'A': // Up arrow

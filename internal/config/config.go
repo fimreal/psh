@@ -27,9 +27,13 @@ type Config struct {
 	LoginLockoutMins int // Lockout duration in minutes (default: 15)
 	MaxSessions      int // Max concurrent sessions per user (default: 10)
 	MaxRequestPerMin int // Max requests per minute per IP (default: 100)
+	MaxWSConnsPerMin int // Max WebSocket connections per minute per IP (default: 10)
 
 	// SSH security settings
 	SSHBlacklist []string // CIDR ranges blocked from SSH (default: 127.0.0.0/8)
+
+	// CORS settings
+	AllowedOrigins []string // Allowed CORS origins
 }
 
 // RunFunc is the function to run after config is loaded
@@ -92,6 +96,9 @@ func Load(run RunFunc) error {
 			if cfg.MaxRequestPerMin == 0 {
 				cfg.MaxRequestPerMin = 100
 			}
+			if cfg.MaxWSConnsPerMin == 0 {
+				cfg.MaxWSConnsPerMin = 10
+			}
 			// Default SSH blacklist: block localhost
 			if len(cfg.SSHBlacklist) == 0 {
 				cfg.SSHBlacklist = []string{"127.0.0.0/8"}
@@ -125,9 +132,13 @@ func Load(run RunFunc) error {
 	flags.IntVar(&cfg.LoginLockoutMins, "login-lockout-mins", 15, "Lockout duration in minutes")
 	flags.IntVar(&cfg.MaxSessions, "max-sessions", 10, "Max concurrent sessions")
 	flags.IntVar(&cfg.MaxRequestPerMin, "max-requests", 100, "Max requests per minute per IP")
+	flags.IntVar(&cfg.MaxWSConnsPerMin, "max-ws-conns", 10, "Max WebSocket connections per minute per IP")
 
 	// SSH security flags
 	flags.StringSliceVar(&cfg.SSHBlacklist, "ssh-blacklist", []string{"127.0.0.0/8"}, "CIDR ranges blocked from SSH (default: 127.0.0.0/8, use empty string to disable)")
+
+	// CORS flags
+	flags.StringSliceVar(&cfg.AllowedOrigins, "allowed-origins", []string{}, "Allowed CORS origins (e.g., https://example.com)")
 
 	viper.AutomaticEnv()
 	viper.SetEnvPrefix("PSH")

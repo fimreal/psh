@@ -96,3 +96,23 @@ func RateLimitMiddleware(limit int) gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// WSRateLimitMiddleware returns a rate limiting middleware for WebSocket connections
+// It uses a separate limiter to avoid interference with regular HTTP rate limiting
+func WSRateLimitMiddleware(limit int) gin.HandlerFunc {
+	limiter := NewRateLimiter(limit)
+
+	return func(c *gin.Context) {
+		ip := c.ClientIP()
+
+		if !limiter.Allow(ip) {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error": "Too many WebSocket connections, please try again later",
+			})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}

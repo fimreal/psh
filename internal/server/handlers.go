@@ -134,15 +134,13 @@ func (h *Handler) LoginHandler(c *gin.Context) {
 		locked := h.loginLimiter.RecordFailure(clientIP)
 		if locked {
 			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error": "Too many failed attempts, account temporarily locked",
+				"error": "Too many failed attempts, please try again later",
 			})
 			return
 		}
 
-		remaining := h.loginLimiter.GetRemainingAttempts(clientIP)
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error":             "Invalid password",
-			"attempts_remaining": remaining,
+			"error": "Invalid password",
 		})
 		return
 	}

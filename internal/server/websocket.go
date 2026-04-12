@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -17,11 +18,25 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// allowedOriginsForWS stores allowed origins for WebSocket validation
+var allowedOriginsForWS []string
+
+// SetupWebSocketOrigins configures allowed origins for WebSocket connections
+func SetupWebSocketOrigins(origins []string) {
+	allowedOriginsForWS = origins
+}
+
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true // Same-origin request
+		}
+
+		// Check against allowed origins
+		return slices.Contains(allowedOriginsForWS, "*") || slices.Contains(allowedOriginsForWS, origin)
 	},
 }
 
