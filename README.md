@@ -91,6 +91,8 @@ docker-compose up -d
 | `PSH_TLS_KEY` | | - | TLS 私钥路径 |
 | `PSH_AUTO_CERTS` | | `true` | 自动生成自签名证书 |
 | `PSH_SSH_BLACKLIST` | | `127.0.0.0/8` | SSH 黑名单（CIDR 格式，逗号分隔） |
+| `PSH_ALLOWED_ORIGINS` | | `*` | CORS 允许的域名（逗号分隔，默认允许所有） |
+| `PSH_MAX_WS_CONNS` | | `10` | 每分钟每 IP 最大 WebSocket 连接数 |
 
 ### SSH 配置示例
 
@@ -173,6 +175,27 @@ psh --ssh-blacklist "127.0.0.0/8,10.0.0.0/8"
 
 # 禁用黑名单
 psh --ssh-blacklist ""
+```
+
+### CORS 配置
+
+默认允许所有域名跨域访问。如果前端部署在独立域名，可以配置允许的域名：
+
+```bash
+# 允许特定域名
+docker run -d \
+  --name psh \
+  -p 8443:8443 \
+  -v ~/.ssh:/root/.ssh:ro \
+  -e PSH_PASSWORD=your-password \
+  -e PSH_ALLOWED_ORIGINS="https://shell.example.com,https://terminal.example.com" \
+  epurs/psh:latest
+```
+
+或使用命令行参数：
+
+```bash
+psh --allowed-origins "https://shell.example.com,https://terminal.example.com"
 ```
 
 ### 审计日志
