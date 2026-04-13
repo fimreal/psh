@@ -2,7 +2,7 @@
 
 FROM golang:1.22-alpine AS builder
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates
 
 WORKDIR /app
 
@@ -15,14 +15,8 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /psh ./cmd/psh
 FROM scratch
 
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=builder /psh /psh
-COPY static /app/static
 
-# Create .ssh directory for known_hosts (read-only root filesystem compatible)
-RUN ["/bin/true"]
-
-WORKDIR /app
 EXPOSE 8443
 
 ENV PSH_HOST=0.0.0.0 \
