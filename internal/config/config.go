@@ -21,6 +21,7 @@ type Config struct {
 	JWTExpire         int
 	Passwords         []string
 	Debug             bool
+	DevMode           bool // Development mode: disable TLS and password auth
 
 	// Security settings
 	MaxLoginAttempts int // Max failed login attempts before lockout (default: 5)
@@ -78,9 +79,21 @@ func Load(run RunFunc) error {
 				cfg.Passwords = viper.GetStringSlice("PASSWORD")
 			}
 
-			if len(cfg.Passwords) == 0 {
+			if len(cfg.Passwords) == 0 && !cfg.DevMode {
 				fmt.Fprintln(os.Stderr, "Error: password is required. Use -P to specify password(s).")
 				os.Exit(1)
+			}
+
+			// Dev mode: use HTTP port 8080 by default
+			if cfg.DevMode && !cmd.Flags().Changed("port") {
+				cfg.Port = 8080
+			}
+
+			// Dev mode safety check: warn if binding to public interface
+			if cfg.DevMode && (cfg.Host == "0.0.0.0" || cfg.Host == "") {
+				fmt.Fprintln(os.Stderr, "WARNING: Dev mode with public binding (0.0.0.0) is insecure!")
+				fmt.Fprintln(os.Stderr, "         Anyone on your network can access this server without authentication.")
+				fmt.Fprintln(os.Stderr, "         Use -H 127.0.0.1 for local development only.")
 			}
 
 			// Set security defaults
@@ -99,8 +112,8 @@ func Load(run RunFunc) error {
 			if cfg.MaxWSConnsPerMin == 0 {
 				cfg.MaxWSConnsPerMin = 10
 			}
-			// Default SSH blacklist: block localhost
-			if len(cfg.SSHBlacklist) == 0 {
+			// Default SSH blacklist: block localhost (disabled in dev mode)
+			if len(cfg.SSHBlacklist) == 0 && !cfg.DevMode {
 				cfg.SSHBlacklist = []string{"127.0.0.0/8"}
 			}
 
@@ -116,7 +129,7 @@ func Load(run RunFunc) error {
 
 	flags := rootCmd.Flags()
 	flags.StringVarP(&cfg.Host, "host", "H", "0.0.0.0", "Host address to bind to")
-	flags.IntVarP(&cfg.Port, "port", "p", 8443, "Port to listen on")
+	flags.IntVarP(&cfg.Port, "port", "p", 8443, "Port to listen on (default: 8443, dev mode: 8080)")
 	flags.StringVarP(&cfg.AuditLogPath, "audit-log", "a", "-", "Path to audit log file ('-' for stdout, empty to disable)")
 	flags.StringVar(&cfg.AuditLevel, "audit-level", "command", "Audit level: off, connection, command, command-full")
 	flags.StringVar(&cfg.TLSCertPath, "tls-cert", "", "Path to TLS certificate file")
@@ -126,6 +139,7 @@ func Load(run RunFunc) error {
 	flags.IntVar(&cfg.JWTExpire, "jwt-expire", 86400, "JWT token expiration time in seconds")
 	flags.StringSliceVarP(&cfg.Passwords, "password", "P", nil, "Password(s) for authentication (can be specified multiple times)")
 	flags.BoolVar(&cfg.Debug, "debug", false, "Enable debug logging")
+	flags.BoolVar(&cfg.DevMode, "dev", false, "Development mode: disable TLS, password auth, and SSH blacklist")
 
 	// Security flags
 	flags.IntVar(&cfg.MaxLoginAttempts, "max-login-attempts", 5, "Max failed login attempts before lockout")

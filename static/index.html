@@ -282,7 +282,6 @@
 
     <div class="status-bar" id="statusBar">
         <span id="statusText">Ready</span>
-        <span id="modeText"></span>
         <span id="connectionInfo"></span>
     </div>
 
@@ -608,270 +607,50 @@
             term.open(container);
             fitAddon.fit();
 
-            // Detect touch device
-            const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-
-            // Only enable touch handling on touch devices
-            if (isTouchDevice) {
-                // Touch handling - two modes: scroll mode (default) and selection mode
-                let isSelectionMode = false;
-                let lastTapTime = 0;
-                let lastTapX = 0;
-                let lastTapY = 0;
-                let touchStartX = 0;
-                let touchStartY = 0;
-                let selectionStartPos = null;
-
-            // Create context menu
-            const contextMenu = document.createElement('div');
-            contextMenu.style.cssText = 'position:fixed;background:#333;border:1px solid #555;border-radius:4px;padding:4px 0;z-index:1000;display:none;box-shadow:0 2px 8px rgba(0,0,0,0.3);min-width:80px;';
-            contextMenu.innerHTML = `
-                <div class="menu-item" data-action="copy" style="padding:10px 16px;cursor:pointer;color:#fff;font-size:14px;">复制</div>
-                <div class="menu-item" data-action="selectAll" style="padding:10px 16px;cursor:pointer;color:#fff;font-size:14px;">全选</div>
-                <div class="menu-item" data-action="paste" style="padding:10px 16px;cursor:pointer;color:#fff;font-size:14px;">粘贴</div>
-            `;
-            document.body.appendChild(contextMenu);
-
-            // Mode indicator in status bar
-            const modeText = $('modeText');
-            const showModeIndicator = () => {
-                modeText.textContent = isSelectionMode ? ' [选择模式]' : ' [滚动模式]';
-            };
-            showModeIndicator(); // Initialize
-
-            // Create toast notification for mode switch
-            const modeToast = document.createElement('div');
-            modeToast.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,122,204,0.9);color:white;padding:20px 40px;border-radius:8px;font-size:18px;z-index:2000;pointer-events:none;opacity:0;transition:opacity 0.3s ease;';
-            document.body.appendChild(modeToast);
-
-            const showModeToast = (selectionMode) => {
-                modeToast.textContent = selectionMode ? '选择模式' : '滚动模式';
-                modeToast.style.opacity = '1';
-                setTimeout(() => {
-                    modeToast.style.opacity = '0';
-                }, 800);
-            };
-
-            // Helper function to get cell position using xterm's internal coords
-            const getCellPosition = (clientX, clientY) => {
-                const rect = container.getBoundingClientRect();
-
-                // Use xterm's stored dimensions directly
-                const cols = term.cols;
-                const rows = term.rows;
-                if (!cols || !rows) return null;
-
-                // Calculate cell dimensions based on actual terminal size
-                const cellWidth = rect.width / cols;
-                const cellHeight = rect.height / rows;
-
-                // Calculate position relative to terminal viewport
-                const col = Math.floor((clientX - rect.left) / cellWidth);
-                const row = Math.floor((clientY - rect.top) / cellHeight);
-
-                return {
-                    col: Math.max(0, Math.min(cols - 1, col)),
-                    row: Math.max(0, Math.min(rows - 1, row))
-                };
-            };
-
-            contextMenu.querySelectorAll('.menu-item').forEach(item => {
-                const handleAction = () => {
-                    const action = item.dataset.action;
-                    if (action === 'copy') {
-                        const selection = term.getSelection();
-                        if (selection && navigator.clipboard) {
-                            navigator.clipboard.writeText(selection).then(() => {
-                                item.textContent = '已复制!';
-                                setTimeout(() => item.textContent = '复制', 1000);
-                            });
-                        }
-                    } else if (action === 'selectAll') {
-                        term.selectAll();
-                    } else if (action === 'paste') {
-                        const tempInput = document.createElement('input');
-                        tempInput.style.cssText = 'position:fixed;left:-1000px;top:-1000px;';
-                        document.body.appendChild(tempInput);
-                        tempInput.focus();
-                        setTimeout(() => {
-                            const pastedText = tempInput.value;
-                            if (pastedText) {
-                                sendKeyToActiveSession(pastedText);
-                            }
-                            document.body.removeChild(tempInput);
-                        }, 100);
-                        if (navigator.clipboard && navigator.clipboard.readText) {
-                            navigator.clipboard.readText().then(text => {
-                                if (text) sendKeyToActiveSession(text);
-                            }).catch(() => {});
-                        }
-                    }
-                    contextMenu.style.display = 'none';
-                };
-                item.addEventListener('click', handleAction);
-                item.addEventListener('touchend', (e) => {
-                    e.preventDefault();
-                    handleAction();
-                });
-            });
-
-            // Hide menu on tap outside
-            document.addEventListener('touchstart', (e) => {
-                if (!contextMenu.contains(e.target)) {
-                    contextMenu.style.display = 'none';
-                }
-            });
-
-            // Simple touch state tracking
-            let currentTouchId = null;
-            let isDragging = false;
-
-            container.addEventListener('touchstart', (e) => {
-                // Don't interfere with IME input on textarea
-                const textarea = container.querySelector('.xterm-helper-textarea');
-                if (textarea && (e.target === textarea || textarea.contains(e.target))) {
-                    return;
-                }
-
-                // Prevent tap from focusing textarea (keyboard only controlled by ⌨ button)
-                e.preventDefault();
-
-                // Hide menu on any touch
-                contextMenu.style.display = 'none';
-
-                const touchCount = e.touches.length;
-                const touch = e.touches[0];
-                const now = Date.now();
-
-                // Two-finger touch - show menu
-                if (touchCount === 2) {
-                    const t1 = e.touches[0];
-                    const t2 = e.touches[1];
-                    const centerX = (t1.clientX + t2.clientX) / 2;
-                    const centerY = (t1.clientY + t2.clientY) / 2;
-                    contextMenu.style.left = Math.min(centerX, window.innerWidth - 100) + 'px';
-                    contextMenu.style.top = Math.min(centerY + 20, window.innerHeight - 140) + 'px';
-                    contextMenu.style.display = 'block';
-                    return;
-                }
-
-                // Single finger handling
-                if (touchCount === 1) {
-                    const dx = Math.abs(touch.clientX - lastTapX);
-                    const dy = Math.abs(touch.clientY - lastTapY);
-
-                    touchStartX = touch.clientX;
-                    touchStartY = touch.clientY;
-                    currentTouchId = touch.identifier;
-                    isDragging = false;
-
-                    // Double tap detection - only in scroll mode to enter selection mode
-                    // (to prevent accidental mode switch during selection)
-                    if (!isSelectionMode && now - lastTapTime < 400 && dx < 50 && dy < 50) {
-                        isSelectionMode = true;
-                        showModeIndicator();
-                        showModeToast(true);
-                        lastTapTime = 0;
-                        lastTapX = -9999;
-                        lastTapY = -9999;
-                        return;
-                    }
-
-                    // Double tap in selection mode to exit
-                    if (isSelectionMode && now - lastTapTime < 400 && dx < 50 && dy < 50) {
-                        isSelectionMode = false;
-                        showModeIndicator();
-                        showModeToast(false);
-                        term.clearSelection();
-                        selectionStartPos = null;
-                        lastTapTime = 0;
-                        lastTapX = -9999;
-                        lastTapY = -9999;
-                        return;
-                    }
-
-                    // Record tap for next double-tap check
-                    lastTapTime = now;
-                    lastTapX = touch.clientX;
-                    lastTapY = touch.clientY;
-
-                    // In selection mode, prepare for drag selection
-                    if (isSelectionMode) {
-                        selectionStartPos = getCellPosition(touch.clientX, touch.clientY);
-                    }
-                }
-            }, { passive: false });
-
-            // Right-click to show menu (desktop)
+            // Right-click context menu (desktop)
             container.addEventListener('contextmenu', (e) => {
                 e.preventDefault();
-                contextMenu.style.left = Math.min(e.clientX, window.innerWidth - 100) + 'px';
-                contextMenu.style.top = Math.min(e.clientY + 10, window.innerHeight - 140) + 'px';
-                contextMenu.style.display = 'block';
-            });
+                const selection = term.getSelection();
 
-            container.addEventListener('touchmove', (e) => {
-                // Find our tracked touch
-                let touch = null;
-                for (const t of e.touches) {
-                    if (t.identifier === currentTouchId) {
-                        touch = t;
-                        break;
-                    }
-                }
-                if (!touch) return;
+                // Create menu
+                const menu = document.createElement('div');
+                menu.style.cssText = 'position:fixed;background:#333;border:1px solid #555;border-radius:4px;padding:4px 0;z-index:1000;box-shadow:0 2px 8px rgba(0,0,0,0.3);min-width:80px;';
+                menu.innerHTML = `
+                    <div class="menu-item" data-action="copy" style="padding:10px 16px;cursor:pointer;color:#fff;font-size:14px;">复制</div>
+                    <div class="menu-item" data-action="selectAll" style="padding:10px 16px;cursor:pointer;color:#fff;font-size:14px;">全选</div>
+                    <div class="menu-item" data-action="paste" style="padding:10px 16px;cursor:pointer;color:#fff;font-size:14px;">粘贴</div>
+                `;
+                menu.style.left = Math.min(e.clientX, window.innerWidth - 100) + 'px';
+                menu.style.top = Math.min(e.clientY + 10, window.innerHeight - 140) + 'px';
+                document.body.appendChild(menu);
 
-                // Mark as dragging
-                isDragging = true;
+                const closeMenu = () => {
+                    menu.remove();
+                    document.removeEventListener('click', closeMenu);
+                };
 
-                // In selection mode, handle drag selection
-                if (isSelectionMode && selectionStartPos) {
-                    e.preventDefault();
-                    const currentPos = getCellPosition(touch.clientX, touch.clientY);
-                    if (currentPos) {
-                        const startCol = Math.min(selectionStartPos.col, currentPos.col);
-                        const startRow = Math.min(selectionStartPos.row, currentPos.row);
-                        const endCol = Math.max(selectionStartPos.col, currentPos.col);
-                        const endRow = Math.max(selectionStartPos.row, currentPos.row);
-
-                        if (endRow === startRow) {
-                            term.select(startCol, startRow, endCol - startCol + 1);
-                        } else {
-                            const totalCols = (endRow - startRow) * term.cols + (endCol - startCol + 1);
-                            term.select(startCol, startRow, totalCols);
+                menu.querySelectorAll('.menu-item').forEach(item => {
+                    item.addEventListener('click', () => {
+                        const action = item.dataset.action;
+                        if (action === 'copy') {
+                            if (selection && navigator.clipboard) {
+                                navigator.clipboard.writeText(selection);
+                            }
+                        } else if (action === 'selectAll') {
+                            term.selectAll();
+                        } else if (action === 'paste') {
+                            if (navigator.clipboard && navigator.clipboard.readText) {
+                                navigator.clipboard.readText().then(text => {
+                                    if (text) sendKeyToActiveSession(text);
+                                }).catch(() => {});
+                            }
                         }
-                    }
-                }
-                // In scroll mode, browser handles scrolling (passive by default)
-            }, { passive: false });
+                        closeMenu();
+                    });
+                });
 
-            container.addEventListener('touchend', (e) => {
-                // Check if our tracked touch ended
-                let touchEnded = false;
-                for (const touch of e.changedTouches) {
-                    if (touch.identifier === currentTouchId) {
-                        touchEnded = true;
-                        break;
-                    }
-                }
-
-                if (touchEnded) {
-                    currentTouchId = null;
-                    // If we were dragging in selection mode, clear tap tracking
-                    // to prevent the selection operation from being mistaken as a double-tap
-                    if (isDragging && isSelectionMode) {
-                        lastTapTime = 0;
-                        lastTapX = -9999;
-                        lastTapY = -9999;
-                    }
-                }
-            }, { passive: true });
-
-            container.addEventListener('touchcancel', (e) => {
-                currentTouchId = null;
-                isDragging = false;
-            }, { passive: true });
-            } // End of isTouchDevice check
+                document.addEventListener('click', closeMenu);
+            });
 
             const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
             const ws = new WebSocket(`${wsProtocol}//${location.host}/ws/terminal`);

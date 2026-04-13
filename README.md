@@ -81,7 +81,7 @@ docker-compose up -d
 |------|:----:|--------|------|
 | `PSH_PASSWORD` | ✅ | - | Web 登录密码（**必填**） |
 | `PSH_HOST` | | `0.0.0.0` | 监听地址 |
-| `PSH_PORT` | | `8443` | HTTPS 端口 |
+| `PSH_PORT` | | `8443` | HTTPS 端口（dev 模式默认 8080） |
 | `PSH_JWT_SECRET` | | 自动生成 | JWT 签名密钥（生产环境建议设置） |
 | `PSH_JWT_EXPIRE` | | `86400` | Token 过期时间（秒） |
 | `PSH_SSH_CONFIG` | | `/root/.ssh/config` | SSH 配置文件路径 |

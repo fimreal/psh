@@ -21,9 +21,10 @@ type Handler struct {
 	loginLimiter   *auth.LoginLimiter
 	sessionManager *auth.SessionManager
 	sshBlacklist   []string
+	devMode        bool
 }
 
-func NewHandler(authService *auth.Service, auditLogger *audit.Logger, jwtExpire int, loginLimiter *auth.LoginLimiter, sessionManager *auth.SessionManager, sshBlacklist []string) *Handler {
+func NewHandler(authService *auth.Service, auditLogger *audit.Logger, jwtExpire int, loginLimiter *auth.LoginLimiter, sessionManager *auth.SessionManager, sshBlacklist []string, devMode bool) *Handler {
 	return &Handler{
 		authService:    authService,
 		auditLogger:    auditLogger,
@@ -31,6 +32,7 @@ func NewHandler(authService *auth.Service, auditLogger *audit.Logger, jwtExpire 
 		loginLimiter:   loginLimiter,
 		sessionManager: sessionManager,
 		sshBlacklist:   sshBlacklist,
+		devMode:        devMode,
 	}
 }
 
@@ -184,6 +186,12 @@ func (h *Handler) LogoutHandler(c *gin.Context) {
 
 // VerifyHandler checks if the user is authenticated
 func (h *Handler) VerifyHandler(c *gin.Context) {
+	// In dev mode, always return authenticated
+	if h.devMode {
+		c.JSON(http.StatusOK, gin.H{"authenticated": true})
+		return
+	}
+
 	token, err := c.Cookie("psh_token")
 	if err != nil || token == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"authenticated": false})

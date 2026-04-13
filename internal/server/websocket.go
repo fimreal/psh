@@ -69,30 +69,38 @@ type WSClient struct {
 
 // TerminalWSHandler handles WebSocket connections for terminal
 func (h *Handler) TerminalWSHandler(c *gin.Context) {
-	// Get token from cookie or query
-	token, err := c.Cookie("psh_token")
-	if err != nil || token == "" {
-		token = c.Query("token")
-	}
+	var tokenID string
 
-	if token == "" {
-		c.Status(http.StatusUnauthorized)
-		return
-	}
+	// In dev mode, skip authentication
+	if h.devMode {
+		tokenID = "dev-mode"
+	} else {
+		// Get token from cookie or query
+		token, err := c.Cookie("psh_token")
+		if err != nil || token == "" {
+			token = c.Query("token")
+		}
 
-	// Validate token
-	claims, err := h.authService.ValidateToken(token)
-	if err != nil {
-		log.Warnw("Invalid token for WebSocket", "error", err)
-		c.Status(http.StatusUnauthorized)
-		return
-	}
+		if token == "" {
+			c.Status(http.StatusUnauthorized)
+			return
+		}
 
-	// Check session limit
-	if !h.sessionManager.CanCreateSession(claims.TokenID) {
-		log.Warnw("Session limit reached", "token_id", claims.TokenID)
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Maximum concurrent sessions reached"})
-		return
+		// Validate token
+		claims, err := h.authService.ValidateToken(token)
+		if err != nil {
+			log.Warnw("Invalid token for WebSocket", "error", err)
+			c.Status(http.StatusUnauthorized)
+			return
+		}
+		tokenID = claims.TokenID
+
+		// Check session limit
+		if !h.sessionManager.CanCreateSession(tokenID) {
+			log.Warnw("Session limit reached", "token_id", tokenID)
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "Maximum concurrent sessions reached"})
+			return
+		}
 	}
 
 	// Upgrade to WebSocket
@@ -126,7 +134,7 @@ func (h *Handler) TerminalWSHandler(c *gin.Context) {
 		auditLogger:    h.auditLogger,
 		done:           make(chan struct{}),
 		sessionManager: h.sessionManager,
-		tokenID:        claims.TokenID,
+		tokenID:        tokenID,
 	}
 
 	client.handleMessages(h.sshBlacklist)

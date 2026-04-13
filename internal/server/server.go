@@ -48,7 +48,7 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	// Create handler
-	handler := NewHandler(authService, auditLogger, cfg.JWTExpire, loginLimiter, sessionManager, cfg.SSHBlacklist)
+	handler := NewHandler(authService, auditLogger, cfg.JWTExpire, loginLimiter, sessionManager, cfg.SSHBlacklist, cfg.DevMode)
 
 	return &Server{
 		cfg:            cfg,
@@ -101,7 +101,11 @@ func (s *Server) Run() error {
 
 	// Protected routes
 	protected := r.Group("")
-	protected.Use(AuthMiddleware(s.authService))
+	if !s.cfg.DevMode {
+		protected.Use(AuthMiddleware(s.authService))
+	} else {
+		log.Warn("DEV MODE: Authentication disabled")
+	}
 	protected.GET("/ws/terminal", WSRateLimitMiddleware(s.cfg.MaxWSConnsPerMin), s.handler.TerminalWSHandler)
 
 	// Create HTTP server
@@ -113,7 +117,9 @@ func (s *Server) Run() error {
 
 	// Setup TLS
 	var tlsConfig *tls.Config
-	if s.cfg.TLSCertPath != "" && s.cfg.TLSKeyPath != "" {
+	if s.cfg.DevMode {
+		log.Warn("DEV MODE: TLS disabled")
+	} else if s.cfg.TLSCertPath != "" && s.cfg.TLSKeyPath != "" {
 		cert, err := tls.LoadX509KeyPair(s.cfg.TLSCertPath, s.cfg.TLSKeyPath)
 		if err != nil {
 			return fmt.Errorf("failed to load TLS certificate: %w", err)
