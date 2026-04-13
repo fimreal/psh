@@ -54,9 +54,6 @@ type Session struct {
 	cmdHistory []string
 	historyIdx int
 	savedLine  string // line saved before browsing history
-
-	// Cursor position tracking (for local shell)
-	cursorPos int // current cursor position in lineBuf (in characters)
 }
 
 // NewSession creates a restricted shell session
@@ -216,7 +213,6 @@ func (s *Session) Write(data []byte) error {
 			if b == '\n' || b == '\r' {
 				password := s.lineBuf.String()
 				s.lineBuf.Reset()
-				s.cursorPos = 0
 				s.savedLine = "" // Clear saved line to prevent password leakage
 				s.awaitingPassword = false
 				s.outputChan <- []byte("\r\n")
@@ -224,19 +220,17 @@ func (s *Session) Write(data []byte) error {
 			} else if b == 127 || b == 8 {
 				if s.lineBuf.Len() > 0 {
 					s.lineBuf.Truncate(s.lineBuf.Len() - 1)
-					s.cursorPos--
 					// Don't echo anything for password
 				}
 			} else if b >= 32 {
 				s.lineBuf.WriteByte(b)
-				s.cursorPos++
 				// Don't echo password characters
 			}
 		}
 		return nil
 	}
 
-	// Handle arrow keys for command history and cursor movement
+	// Handle arrow keys for command history (up/down only)
 	if len(data) == 3 && data[0] == 0x1b && data[1] == '[' {
 		switch data[2] {
 		case 'A': // Up arrow
@@ -245,23 +239,9 @@ func (s *Session) Write(data []byte) error {
 		case 'B': // Down arrow
 			s.navigateHistory(1)
 			return nil
-		case 'C': // Right arrow - move cursor right
-			lineBytes := s.lineBuf.Bytes()
-			charCount := s.countChars(lineBytes)
-			if s.cursorPos < charCount {
-				s.cursorPos++
-				s.outputChan <- []byte("\x1b[C")
-			}
-			return nil
-		case 'D': // Left arrow - move cursor left
-			if s.cursorPos > 0 {
-				s.cursorPos--
-				s.outputChan <- []byte("\x1b[D")
-			}
-			return nil
 		}
 	}
-	// Other escape sequences (ESC key, etc.)
+	// Other escape sequences (ESC key, left/right arrows, etc.)
 	if len(data) >= 1 && data[0] == 0x1b {
 		return nil
 	}
@@ -272,7 +252,6 @@ func (s *Session) Write(data []byte) error {
 		if b == '\n' || b == '\r' {
 			cmd := strings.TrimSpace(s.lineBuf.String())
 			s.lineBuf.Reset()
-			s.cursorPos = 0
 			// Reset history index and save command
 			s.historyIdx = len(s.cmdHistory)
 			s.savedLine = ""
@@ -287,14 +266,22 @@ func (s *Session) Write(data []byte) error {
 			}
 			i++
 		} else if b == 127 || b == 8 {
-			// Backspace - delete character before cursor
-			if s.cursorPos > 0 {
-				s.deleteCharBeforeCursor()
+			// Backspace - delete last character
+			if s.lineBuf.Len() > 0 {
+				lastBytes := s.lineBuf.Bytes()
+				// Find start of last UTF-8 character
+				j := len(lastBytes) - 1
+				for j > 0 && (lastBytes[j]&0xC0) == 0x80 {
+					j--
+				}
+				s.lineBuf.Truncate(j)
+				s.outputChan <- []byte("\b \b")
 			}
 			i++
 		} else if b >= 32 && b < 127 {
 			// ASCII printable characters
-			s.insertChar([]byte{b})
+			s.lineBuf.WriteByte(b)
+			s.outputChan <- []byte{b}
 			i++
 		} else if b >= 0x80 {
 			// UTF-8 multi-byte character: collect all bytes
@@ -307,7 +294,9 @@ func (s *Session) Write(data []byte) error {
 				charLen = 4
 			}
 			if i+charLen <= len(data) {
-				s.insertChar(data[i : i+charLen])
+				charBytes := data[i : i+charLen]
+				s.lineBuf.Write(charBytes)
+				s.outputChan <- charBytes
 				i += charLen
 			} else {
 				i++
@@ -318,109 +307,6 @@ func (s *Session) Write(data []byte) error {
 	}
 
 	return nil
-}
-
-// countChars counts the number of UTF-8 characters in a byte slice
-func (s *Session) countChars(data []byte) int {
-	count := 0
-	for i := 0; i < len(data); {
-		if data[i]&0x80 == 0 {
-			i++
-		} else if data[i]&0xE0 == 0xC0 {
-			i += 2
-		} else if data[i]&0xF0 == 0xE0 {
-			i += 3
-		} else if data[i]&0xF8 == 0xF0 {
-			i += 4
-		} else {
-			i++
-		}
-		count++
-	}
-	return count
-}
-
-// charPosToBytePos converts a character position to byte position
-func (s *Session) charPosToBytePos(data []byte, charPos int) int {
-	bytePos := 0
-	chars := 0
-	for bytePos < len(data) && chars < charPos {
-		if data[bytePos]&0x80 == 0 {
-			bytePos++
-		} else if data[bytePos]&0xE0 == 0xC0 {
-			bytePos += 2
-		} else if data[bytePos]&0xF0 == 0xE0 {
-			bytePos += 3
-		} else if data[bytePos]&0xF8 == 0xF0 {
-			bytePos += 4
-		} else {
-			bytePos++
-		}
-		chars++
-	}
-	return bytePos
-}
-
-// insertChar inserts a character at the current cursor position
-func (s *Session) insertChar(char []byte) {
-	lineBytes := s.lineBuf.Bytes()
-
-	// Find byte position for cursor
-	bytePos := s.charPosToBytePos(lineBytes, s.cursorPos)
-
-	// Insert the character
-	newLine := make([]byte, 0, len(lineBytes)+len(char))
-	newLine = append(newLine, lineBytes[:bytePos]...)
-	newLine = append(newLine, char...)
-	newLine = append(newLine, lineBytes[bytePos:]...)
-
-	s.lineBuf.Reset()
-	s.lineBuf.Write(newLine)
-	s.cursorPos++
-
-	// Redraw from cursor position
-	s.outputChan <- char                         // Write the new char
-	if len(newLine) > bytePos+len(char) {
-		s.outputChan <- newLine[bytePos+len(char):] // Write rest of line after insertion
-		// Move cursor back to correct position
-		remaining := len(newLine) - bytePos - len(char)
-		for i := 0; i < remaining; i++ {
-			s.outputChan <- []byte("\b")
-		}
-	}
-}
-
-// deleteCharBeforeCursor deletes the character before the cursor
-func (s *Session) deleteCharBeforeCursor() {
-	lineBytes := s.lineBuf.Bytes()
-	if len(lineBytes) == 0 || s.cursorPos == 0 {
-		return
-	}
-
-	// Find byte positions
-	bytePosBefore := s.charPosToBytePos(lineBytes, s.cursorPos-1)
-	bytePosAt := s.charPosToBytePos(lineBytes, s.cursorPos)
-
-	// Remove the character
-	newLine := make([]byte, 0, len(lineBytes)-(bytePosAt-bytePosBefore))
-	newLine = append(newLine, lineBytes[:bytePosBefore]...)
-	newLine = append(newLine, lineBytes[bytePosAt:]...)
-
-	s.lineBuf.Reset()
-	s.lineBuf.Write(newLine)
-	s.cursorPos--
-
-	// Redraw from cursor to end
-	s.outputChan <- []byte("\b")      // Move cursor back
-	s.outputChan <- []byte("\x1b[K")  // Clear to end of line
-	if len(newLine) > bytePosBefore {
-		s.outputChan <- newLine[bytePosBefore:] // Write rest of line
-		// Move cursor back to correct position
-		remaining := len(newLine) - bytePosBefore
-		for i := 0; i < remaining; i++ {
-			s.outputChan <- []byte("\b")
-		}
-	}
 }
 
 // navigateHistory handles up/down arrow key navigation through command history
@@ -449,12 +335,11 @@ func (s *Session) navigateHistory(direction int) {
 
 	s.historyIdx = newIdx
 
-	// Move cursor to beginning
-	for i := 0; i < s.cursorPos; i++ {
-		s.outputChan <- []byte("\b")
+	// Clear current line by sending backspaces
+	lineLen := s.lineBuf.Len()
+	for i := 0; i < lineLen; i++ {
+		s.outputChan <- []byte("\b \b")
 	}
-	// Clear to end of line
-	s.outputChan <- []byte("\x1b[K")
 
 	// Set new content
 	var newContent string
@@ -466,7 +351,6 @@ func (s *Session) navigateHistory(direction int) {
 
 	s.lineBuf.Reset()
 	s.lineBuf.WriteString(newContent)
-	s.cursorPos = s.countChars([]byte(newContent))
 	s.outputChan <- []byte(newContent)
 }
 

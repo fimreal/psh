@@ -280,7 +280,7 @@
         </div>
     </div>
 
-    <div class="status-bar">
+    <div class="status-bar" id="statusBar">
         <span id="statusText">Ready</span>
         <span id="modeText"></span>
         <span id="connectionInfo"></span>
@@ -365,9 +365,17 @@
 
         function setupMobileKeys() {
             const mobileKeys = $('mobileKeys');
-            // 阻止整个按键栏的触摸默认行为，防止误触
+            // 阻止整个按键栏的触摸默认行为，防止误触并保持键盘
             mobileKeys.addEventListener('touchstart', (e) => {
                 e.preventDefault();
+                // Re-focus textarea to keep keyboard open when tapping anywhere on the bar
+                const s = sessions.get(activeSessionId);
+                if (s) {
+                    const textarea = s.container.querySelector('.xterm-helper-textarea');
+                    if (textarea && document.activeElement !== textarea) {
+                        textarea.focus();
+                    }
+                }
             }, { passive: false });
 
             mobileKeys.querySelectorAll('.mod-key').forEach(btn => {
@@ -462,6 +470,19 @@
             $('loginBtn').onclick = handleLogin;
             $('loginPassword').onkeypress = e => { if (e.key === 'Enter') handleLogin(); };
             setupMobileKeys();
+
+            // Keep keyboard open when tapping status bar
+            $('statusBar').addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                const s = sessions.get(activeSessionId);
+                if (s) {
+                    const textarea = s.container.querySelector('.xterm-helper-textarea');
+                    if (textarea && document.activeElement !== textarea) {
+                        textarea.focus();
+                    }
+                }
+            }, { passive: false });
+
             $('settingsBtn').onclick = e => {
                 e.stopPropagation();
                 $('settingsPanel').classList.toggle('active');
@@ -918,14 +939,6 @@
                 });
             }
 
-            // Command history (frontend-side, stateless)
-            let commandHistory = [];
-            let historyIndex = -1;
-            let currentInput = ''; // Current input before history navigation
-
-            // Track input length by monitoring keystrokes
-            let pendingInput = '';
-
             term.onData(data => {
                 // Mark this data as sent via onData
                 if (ws.readyState === WebSocket.OPEN) {
@@ -951,71 +964,10 @@
                         return;
                     }
 
-                    // Handle up/down arrow keys for command history
-                    if (data === '\x1b[A') { // Up arrow
-                        if (commandHistory.length > 0 && historyIndex < commandHistory.length - 1) {
-                            if (historyIndex === -1) {
-                                currentInput = pendingInput;
-                            }
-                            historyIndex++;
-                            const historyCmd = commandHistory[commandHistory.length - 1 - historyIndex];
-                            replaceInput(pendingInput.length, historyCmd);
-                            pendingInput = historyCmd;
-                        }
-                        return;
-                    } else if (data === '\x1b[B') { // Down arrow
-                        if (historyIndex > 0) {
-                            historyIndex--;
-                            const historyCmd = commandHistory[commandHistory.length - 1 - historyIndex];
-                            replaceInput(pendingInput.length, historyCmd);
-                            pendingInput = historyCmd;
-                        } else if (historyIndex === 0) {
-                            historyIndex = -1;
-                            replaceInput(pendingInput.length, currentInput);
-                            pendingInput = currentInput;
-                        }
-                        return;
-                    }
-
-                    // Update pending input tracking
-                    if (data === '\r') { // Enter
-                        const cmd = pendingInput.trim();
-                        if (cmd) {
-                            if (commandHistory.length === 0 || commandHistory[commandHistory.length - 1] !== cmd) {
-                                commandHistory.push(cmd);
-                            }
-                        }
-                        pendingInput = '';
-                        historyIndex = -1;
-                    } else if (data === '\x7f' || data === '\b') { // Backspace
-                        pendingInput = pendingInput.slice(0, -1);
-                        historyIndex = -1;
-                    } else if (data === '\x15') { // Ctrl+U - clear line
-                        pendingInput = '';
-                        historyIndex = -1;
-                    } else if (data.charCodeAt(0) >= 32 && data.charCodeAt(0) < 127) {
-                        // Printable character
-                        pendingInput += data;
-                        historyIndex = -1;
-                    } else {
-                        historyIndex = -1;
-                    }
-
+                    // Send all input directly to backend (let remote shell handle history)
                     ws.send(JSON.stringify({ type: 'input', data: base64Encode(data) }));
                 }
             });
-
-            // Replace current input by sending backspaces then new text
-            function replaceInput(currentLen, newText) {
-                // Send backspaces to clear current input
-                let seq = '';
-                for (let i = 0; i < currentLen; i++) {
-                    seq += '\x7f'; // backspace
-                }
-                // Then send the new text
-                seq += newText;
-                ws.send(JSON.stringify({ type: 'input', data: base64Encode(seq) }));
-            }
 
             // Handle resize
             let resizeTimeout;
