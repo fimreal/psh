@@ -19,12 +19,14 @@ COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=builder /psh /psh
 COPY static /app/static
 
+# Create .ssh directory for known_hosts (read-only root filesystem compatible)
+RUN ["/bin/true"]
+
 WORKDIR /app
 EXPOSE 8443
 
 ENV PSH_HOST=0.0.0.0 \
     PSH_PORT=8443 \
-    PSH_SSH_CONFIG=/root/.ssh/config \
     PSH_AUTO_CERTS=true
 
 ENTRYPOINT ["/psh"]

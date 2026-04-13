@@ -15,30 +15,42 @@ import (
 )
 
 type Handler struct {
-	authService    *auth.Service
-	auditLogger    *audit.Logger
-	jwtExpire      int
-	loginLimiter   *auth.LoginLimiter
-	sessionManager *auth.SessionManager
-	sshBlacklist   []string
-	devMode        bool
+	authService       *auth.Service
+	auditLogger       *audit.Logger
+	jwtExpire         int
+	loginLimiter      *auth.LoginLimiter
+	sessionManager    *auth.SessionManager
+	sshBlacklist      []string
+	strictHostKey     bool
+	showHostKeyDigest bool
+	devMode           bool
 }
 
-func NewHandler(authService *auth.Service, auditLogger *audit.Logger, jwtExpire int, loginLimiter *auth.LoginLimiter, sessionManager *auth.SessionManager, sshBlacklist []string, devMode bool) *Handler {
+func NewHandler(authService *auth.Service, auditLogger *audit.Logger, jwtExpire int, loginLimiter *auth.LoginLimiter, sessionManager *auth.SessionManager, sshBlacklist []string, strictHostKey, showHostKeyDigest bool, devMode bool) *Handler {
 	return &Handler{
-		authService:    authService,
-		auditLogger:    auditLogger,
-		jwtExpire:      jwtExpire,
-		loginLimiter:   loginLimiter,
-		sessionManager: sessionManager,
-		sshBlacklist:   sshBlacklist,
-		devMode:        devMode,
+		authService:       authService,
+		auditLogger:       auditLogger,
+		jwtExpire:         jwtExpire,
+		loginLimiter:      loginLimiter,
+		sessionManager:    sessionManager,
+		sshBlacklist:      sshBlacklist,
+		strictHostKey:     strictHostKey,
+		showHostKeyDigest: showHostKeyDigest,
+		devMode:           devMode,
 	}
 }
 
 // IndexHandler serves the main page
 func (h *Handler) IndexHandler(c *gin.Context) {
-	c.HTML(http.StatusOK, "index.html", nil)
+	// Get CSP nonce from context
+	nonce, exists := c.Get("csp-nonce")
+	if !exists {
+		nonce = ""
+	}
+
+	c.HTML(http.StatusOK, "index.html", gin.H{
+		"nonce": nonce,
+	})
 }
 
 // StaticHandler serves static files from embedded FS
@@ -97,7 +109,13 @@ func (h *Handler) StaticHandler(c *gin.Context) {
 
 	c.Header("Content-Type", mimeType)
 	c.Header("X-Content-Type-Options", "nosniff")
-	c.Header("Cache-Control", "public, max-age=3600")
+
+	// Long cache for versioned static assets (xterm.js, etc.)
+	if strings.HasPrefix(path, "xterm/") {
+		c.Header("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		c.Header("Cache-Control", "public, max-age=3600")
+	}
 
 	data, err := io.ReadAll(file)
 	if err != nil {
@@ -108,7 +126,9 @@ func (h *Handler) StaticHandler(c *gin.Context) {
 }
 
 type LoginRequest struct {
-	Password string `json:"password" binding:"required"`
+	Password      string `json:"password" binding:"required,min=1,max=256"`
+	CaptchaKey    string `json:"captcha_key,omitempty"`
+	CaptchaAnswer int    `json:"captcha_answer,omitempty"`
 }
 
 // LoginHandler handles authentication
@@ -124,6 +144,46 @@ func (h *Handler) LoginHandler(c *gin.Context) {
 		})
 		return
 	}
+
+	// Check if captcha is required
+	if h.loginLimiter.RequiresCaptcha(clientIP) {
+		// Limit request body size to prevent DoS
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1024)
+
+		var req LoginRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+			return
+		}
+
+		// Verify captcha if provided
+		if req.CaptchaKey == "" || req.CaptchaAnswer == 0 {
+			// Generate new captcha challenge
+			key, question := h.loginLimiter.GenerateCaptcha(clientIP)
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error":          "Captcha required",
+				"captcha_key":    key,
+				"captcha_question": question,
+				"captcha_needed": true,
+			})
+			return
+		}
+
+		// Verify captcha answer
+		if !h.loginLimiter.VerifyCaptcha(clientIP, req.CaptchaKey, req.CaptchaAnswer) {
+			key, question := h.loginLimiter.GenerateCaptcha(clientIP)
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error":            "Invalid captcha",
+				"captcha_key":      key,
+				"captcha_question": question,
+				"captcha_needed":   true,
+			})
+			return
+		}
+	}
+
+	// Limit request body size to prevent DoS
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1024)
 
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -142,7 +202,7 @@ func (h *Handler) LoginHandler(c *gin.Context) {
 		}
 
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "Invalid password",
+			"error": "Authentication failed",
 		})
 		return
 	}

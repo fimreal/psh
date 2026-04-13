@@ -1,6 +1,8 @@
 package server
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"net/http"
 	"slices"
 	"strings"
@@ -9,9 +11,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// generateNonce creates a cryptographically secure random nonce
+func generateNonce() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return base64.StdEncoding.EncodeToString(b)
+}
+
 // SecurityMiddleware adds security-related headers
 func SecurityMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Generate nonce for this request
+		nonce := generateNonce()
+
+		// Store nonce in context for use in templates
+		c.Set("csp-nonce", nonce)
+
 		// Prevent clickjacking
 		c.Header("X-Frame-Options", "DENY")
 		// Prevent MIME type sniffing
@@ -20,8 +35,18 @@ func SecurityMiddleware() gin.HandlerFunc {
 		c.Header("X-XSS-Protection", "1; mode=block")
 		// Referrer policy
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
-		// Content Security Policy
-		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; font-src 'self' data:; img-src 'self' data:;")
+		// Content Security Policy with nonce (no unsafe-inline for scripts)
+		// Note: style-src still needs unsafe-inline due to xterm.js inline styles
+		csp := "default-src 'self'; " +
+			"script-src 'self' 'nonce-" + nonce + "'; " +
+			"style-src 'self' 'unsafe-inline'; " +
+			"connect-src 'self' ws: wss:; " +
+			"font-src 'self' data:; " +
+			"img-src 'self' data:; " +
+			"object-src 'none'; " +
+			"base-uri 'self'; " +
+			"form-action 'self'"
+		c.Header("Content-Security-Policy", csp)
 		// HSTS - only for HTTPS
 		if c.Request.TLS != nil {
 			c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
@@ -69,20 +94,15 @@ func CORSMiddleware(allowedOrigins []string) gin.HandlerFunc {
 
 func AuthMiddleware(authService *auth.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Check cookie first
+		// Check cookie first (preferred)
 		token, err := c.Cookie("psh_token")
 		if err != nil || token == "" {
-			// Check Authorization header
+			// Check Authorization header as fallback
 			authHeader := c.GetHeader("Authorization")
 			if token, _ = strings.CutPrefix(authHeader, "Bearer "); token == "" {
-				// Check query parameter
-				token = c.Query("token")
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "No token provided"})
+				return
 			}
-		}
-
-		if token == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "No token provided"})
-			return
 		}
 
 		claims, err := authService.ValidateToken(token)

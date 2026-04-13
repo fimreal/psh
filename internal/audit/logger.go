@@ -41,11 +41,16 @@ type Event struct {
 }
 
 type Logger struct {
-	path       string
-	level      Level
-	file       *os.File
-	mu         sync.Mutex
-	maxRetries int
+	path        string
+	level       Level
+	file        *os.File
+	mu          sync.Mutex
+	eventChan   chan Event
+	done        chan struct{}
+	wg          sync.WaitGroup
+	batchSize   int
+	batchWindow time.Duration
+	isStdout    bool // stdout mode uses sync writes
 }
 
 func NewLogger(path string, level Level) (*Logger, error) {
@@ -59,14 +64,16 @@ func NewLogger(path string, level Level) (*Logger, error) {
 	// Empty path or off level disables audit logging
 	if path == "" || level == LevelOff {
 		log.Infow("Audit logging disabled")
-		return &Logger{path: "", level: LevelOff, file: nil, maxRetries: 0}, nil
+		return &Logger{path: "", level: LevelOff, file: nil, eventChan: nil, done: nil}, nil
 	}
 
 	// "-" means stdout
 	var file *os.File
+	var isStdout bool
 	if path == "-" {
 		log.Infow("Audit logger initialized", "path", "stdout", "level", level)
 		file = os.Stdout
+		isStdout = true
 	} else {
 		// Ensure parent directory exists
 		dir := filepath.Dir(path)
@@ -74,7 +81,7 @@ func NewLogger(path string, level Level) (*Logger, error) {
 			return nil, err
 		}
 
-		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 		if err != nil {
 			return nil, err
 		}
@@ -82,15 +89,33 @@ func NewLogger(path string, level Level) (*Logger, error) {
 		log.Infow("Audit logger initialized", "path", path, "level", level)
 	}
 
-	return &Logger{
-		path:       path,
-		level:      level,
-		file:       file,
-		maxRetries: 3,
-	}, nil
+	l := &Logger{
+		path:        path,
+		level:       level,
+		file:        file,
+		isStdout:    isStdout,
+		eventChan:   make(chan Event, 1000), // buffer for async writes
+		done:        make(chan struct{}),
+		batchSize:   100,
+		batchWindow: 100 * time.Millisecond,
+	}
+
+	// Start async writer goroutine only for file mode (not stdout)
+	if !isStdout {
+		l.wg.Add(1)
+		go l.asyncWriter()
+	}
+
+	return l, nil
 }
 
 func (l *Logger) Close() error {
+	// Signal async writer to stop
+	if l.done != nil {
+		close(l.done)
+		l.wg.Wait()
+	}
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.file != nil && l.path != "-" {
@@ -99,37 +124,86 @@ func (l *Logger) Close() error {
 	return nil
 }
 
+// asyncWriter handles batched writes in a background goroutine
+func (l *Logger) asyncWriter() {
+	defer l.wg.Done()
+
+	if l.file == nil {
+		return
+	}
+
+	batch := make([][]byte, 0, l.batchSize)
+	timer := time.NewTimer(l.batchWindow)
+	defer timer.Stop()
+
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		l.mu.Lock()
+		for _, data := range batch {
+			if _, err := l.file.Write(data); err != nil {
+				log.Debugw("Failed to write audit log", "error", err)
+			}
+		}
+		if err := l.file.Sync(); err != nil {
+			log.Debugw("Failed to sync audit log", "error", err)
+		}
+		l.mu.Unlock()
+		batch = batch[:0]
+	}
+
+	for {
+		select {
+		case <-l.done:
+			// Flush remaining events before shutdown
+			flush()
+			return
+		case event := <-l.eventChan:
+			event.Timestamp = time.Now().UTC().Format(time.RFC3339)
+			data, err := json.Marshal(event)
+			if err != nil {
+				continue
+			}
+			batch = append(batch, append(data, '\n'))
+			if len(batch) >= l.batchSize {
+				flush()
+				timer.Reset(l.batchWindow)
+			}
+		case <-timer.C:
+			flush()
+		}
+	}
+}
+
 func (l *Logger) writeEvent(event Event) error {
 	// Skip if audit logging is disabled
 	if l.file == nil {
 		return nil
 	}
 
-	event.Timestamp = time.Now().UTC().Format(time.RFC3339)
-
-	data, err := json.Marshal(event)
-	if err != nil {
+	// stdout mode: sync writes for immediate output
+	if l.isStdout {
+		event.Timestamp = time.Now().UTC().Format(time.RFC3339)
+		data, err := json.Marshal(event)
+		if err != nil {
+			return err
+		}
+		l.mu.Lock()
+		_, err = l.file.Write(append(data, '\n'))
+		l.mu.Unlock()
 		return err
 	}
 
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	var lastErr error
-	for i := 0; i < l.maxRetries; i++ {
-		_, err := l.file.Write(append(data, '\n'))
-		if err == nil {
-			if syncErr := l.file.Sync(); syncErr != nil {
-				log.Debugw("Failed to sync audit log", "error", syncErr)
-			}
-			log.Debugw("Audit event logged", "type", event.Type)
-			return nil
-		}
-		lastErr = err
-		time.Sleep(time.Duration(100*(i+1)) * time.Millisecond)
+	// file mode: non-blocking send to async writer
+	select {
+	case l.eventChan <- event:
+		return nil
+	default:
+		// Channel full, log warning and drop event to avoid blocking
+		log.Warnw("Audit log channel full, dropping event", "type", event.Type)
+		return nil
 	}
-
-	return lastErr
 }
 
 func (l *Logger) LogConnection(sessionID, host, user string) error {
@@ -167,12 +241,32 @@ func (l *Logger) LogCommand(sessionID, host, command string) error {
 		command = extractCommandName(command)
 	}
 
+	// Sanitize command to prevent log injection
+	command = sanitizeForLog(command)
+
 	return l.writeEvent(Event{
 		Type:      EventCommand,
 		SessionID: sessionID,
 		Host:      host,
 		Command:   command,
 	})
+}
+
+// sanitizeForLog removes control characters that could be used for log injection
+func sanitizeForLog(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		// Allow printable ASCII and common whitespace (space, tab)
+		if r >= 32 && r < 127 {
+			b.WriteRune(r)
+		} else if r == ' ' || r == '\t' {
+			b.WriteRune(r)
+		}
+		// Replace other control chars with space to maintain readability
+		// but prevent injection of newlines, etc.
+	}
+	return b.String()
 }
 
 func (l *Logger) LogError(sessionID, host, errMsg string) error {

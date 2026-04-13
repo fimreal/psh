@@ -17,11 +17,12 @@ type Claims struct {
 }
 
 type Service struct {
-	jwtSecret  []byte
-	jwtExpire  int
-	passwords  [][]byte
-	blacklist  map[string]time.Time // tokenID -> expiry time
+	jwtSecret   []byte
+	jwtExpire   int
+	passwords   [][]byte
+	blacklist   map[string]time.Time // tokenID -> expiry time
 	blacklistMu sync.RWMutex
+	stopCleanup chan struct{} // signal to stop cleanup goroutine
 }
 
 func NewService(jwtSecret string, jwtExpire int, passwords []string) *Service {
@@ -41,11 +42,37 @@ func NewService(jwtSecret string, jwtExpire int, passwords []string) *Service {
 		pwBytes[i] = []byte(pw)
 	}
 
-	return &Service{
-		jwtSecret: []byte(secret),
-		jwtExpire: jwtExpire,
-		passwords: pwBytes,
-		blacklist: make(map[string]time.Time),
+	s := &Service{
+		jwtSecret:   []byte(secret),
+		jwtExpire:   jwtExpire,
+		passwords:   pwBytes,
+		blacklist:   make(map[string]time.Time),
+		stopCleanup: make(chan struct{}),
+	}
+
+	// Start automatic blacklist cleanup
+	go s.cleanupLoop()
+
+	return s
+}
+
+// Close stops the cleanup goroutine
+func (s *Service) Close() {
+	close(s.stopCleanup)
+}
+
+// cleanupLoop periodically cleans up expired blacklist entries
+func (s *Service) cleanupLoop() {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.stopCleanup:
+			return
+		case <-ticker.C:
+			s.CleanupBlacklist()
+		}
 	}
 }
 

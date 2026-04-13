@@ -47,8 +47,10 @@ type Session struct {
 	pendingSSHPort   int
 	pendingSigners   []ssh.Signer
 
-	// SSH blacklist
-	sshBlacklist []*net.IPNet
+	// SSH security
+	sshBlacklist      []*net.IPNet
+	strictHostKey     bool // Reject unknown hosts instead of auto-accepting
+	showHostKeyDigest bool // Show fingerprint when connecting
 
 	// Command history
 	cmdHistory []string
@@ -57,15 +59,17 @@ type Session struct {
 }
 
 // NewSession creates a restricted shell session
-func NewSession(blacklist []string) *Session {
+func NewSession(blacklist []string, strictHostKey, showHostKeyDigest bool) *Session {
 	s := &Session{
-		outputChan:   make(chan []byte, 256),
-		done:         make(chan struct{}),
-		lineBuf:      &bytes.Buffer{},
-		cols:         80,
-		rows:         24,
-		hosts:        make(map[string]HostConfig),
-		sshBlacklist: parseBlacklist(blacklist),
+		outputChan:        make(chan []byte, 256),
+		done:              make(chan struct{}),
+		lineBuf:           &bytes.Buffer{},
+		cols:              80,
+		rows:              24,
+		hosts:             make(map[string]HostConfig),
+		sshBlacklist:      parseBlacklist(blacklist),
+		strictHostKey:     strictHostKey,
+		showHostKeyDigest: showHostKeyDigest,
 	}
 	s.loadSSHConfig()
 	return s
@@ -649,15 +653,33 @@ func (s *Session) verifyHostKey(hostname string, key ssh.PublicKey) error {
 	home, _ := os.UserHomeDir()
 	knownHostsPath := filepath.Join(home, ".ssh", "known_hosts")
 
+	fingerprint := ssh.FingerprintSHA256(key)
+
+	// Show fingerprint for transparency (helps detect MITM)
+	if s.showHostKeyDigest {
+		s.outputChan <- fmt.Appendf(nil, "\r\nHost key: %s %s\r\n", key.Type(), fingerprint)
+	}
+
 	// Check if known_hosts exists
 	if _, err := os.Stat(knownHostsPath); os.IsNotExist(err) {
-		s.outputChan <- fmt.Appendf(nil, "\r\nNew host key for %s - auto-accepting\r\n", hostname)
+		if s.strictHostKey {
+			s.outputChan <- []byte("Error: Unknown host key and strict mode enabled.\r\n")
+			s.outputChan <- []byte("Add the host to ~/.ssh/known_hosts manually or disable strict mode.\r\n")
+			s.printPrompt()
+			return fmt.Errorf("unknown host key (strict mode)")
+		}
+		s.outputChan <- fmt.Appendf(nil, "New host for %s - auto-accepting\r\n", hostname)
 		return s.addHostKey(hostname, key, knownHostsPath)
 	}
 
 	// Read and check known_hosts
 	data, err := os.ReadFile(knownHostsPath)
 	if err != nil {
+		if s.strictHostKey {
+			s.outputChan <- []byte("Error: Cannot read known_hosts and strict mode enabled.\r\n")
+			s.printPrompt()
+			return fmt.Errorf("cannot read known_hosts (strict mode)")
+		}
 		return s.addHostKey(hostname, key, knownHostsPath)
 	}
 
@@ -676,16 +698,29 @@ func (s *Session) verifyHostKey(hostname string, key ssh.PublicKey) error {
 			for _, h := range hosts {
 				if h == hostname {
 					if parts[2] == keyStr {
-						return nil
+						return nil // Key matches
 					}
+					// Key mismatch - potential MITM attack
+					s.outputChan <- []byte("\r\n\x1b[31mWARNING: HOST KEY MISMATCH!\x1b[0m\r\n")
+					s.outputChan <- []byte("This could indicate a man-in-the-middle attack.\r\n")
+					s.outputChan <- []byte("Remove the old key from ~/.ssh/known_hosts if this is expected.\r\n")
+					s.printPrompt()
+					return fmt.Errorf("host key mismatch for %s", hostname)
 				}
 			}
 		}
 	}
 
-	// Key not found - auto-accept
-	s.outputChan <- fmt.Appendf(nil, "\r\nNew host key for %s\r\n", hostname)
-	s.outputChan <- fmt.Appendf(nil, "Fingerprint: %s\r\n", ssh.FingerprintSHA256(key))
+	// Key not found
+	if s.strictHostKey {
+		s.outputChan <- fmt.Appendf(nil, "Error: Unknown host key for %s (strict mode)\r\n", hostname)
+		s.outputChan <- []byte("Add to known_hosts manually or connect without strict mode.\r\n")
+		s.printPrompt()
+		return fmt.Errorf("unknown host key (strict mode)")
+	}
+
+	// Auto-accept new key (default behavior for compatibility)
+	s.outputChan <- fmt.Appendf(nil, "New host key for %s\r\n", hostname)
 	s.outputChan <- []byte("Accepting and adding to known_hosts...\r\n")
 	return s.addHostKey(hostname, key, knownHostsPath)
 }

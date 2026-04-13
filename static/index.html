@@ -305,13 +305,17 @@
             <label class="form-label">Password</label>
             <input type="password" class="form-input" id="loginPassword" placeholder="Enter password">
         </div>
+        <div class="form-group hidden" id="captchaGroup">
+            <label class="form-label" id="captchaQuestion"></label>
+            <input type="number" class="form-input" id="captchaAnswer" placeholder="Enter answer">
+        </div>
         <div class="button-group">
             <button class="btn btn-primary" id="loginBtn">Login</button>
         </div>
         <div class="error-msg hidden" id="loginError"></div>
     </div>
 
-    <script type="module">
+    <script type="module" nonce="{{.nonce}}">
         import { Terminal } from '/static/xterm/xterm.esm.js';
         import { FitAddon } from '/static/xterm/xterm-addon-fit.esm.js';
 
@@ -468,6 +472,7 @@
             $('addTabBtn').onclick = () => createSession();
             $('loginBtn').onclick = handleLogin;
             $('loginPassword').onkeypress = e => { if (e.key === 'Enter') handleLogin(); };
+            $('captchaAnswer').onkeypress = e => { if (e.key === 'Enter') handleLogin(); };
             setupMobileKeys();
 
             // Keep keyboard open when tapping status bar
@@ -530,22 +535,50 @@
             }
         }
 
+        let captchaKey = '';
+
         async function handleLogin() {
             const password = $('loginPassword').value;
+            const captchaAnswer = $('captchaAnswer').value;
+
+            const body = { password };
+            if (captchaKey && captchaAnswer) {
+                body.captcha_key = captchaKey;
+                body.captcha_answer = parseInt(captchaAnswer);
+            }
+
             const res = await fetch('/api/auth/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
-                body: JSON.stringify({ password })
+                body: JSON.stringify(body)
             });
+
+            const data = await res.json();
+
             if (res.ok) {
                 $('loginDialog').classList.add('hidden');
                 $('overlay').classList.remove('active');
+                $('captchaGroup').classList.add('hidden');
+                captchaKey = '';
                 // Auto create first session
                 createSession();
+            } else if (data.captcha_needed) {
+                // Show captcha field
+                $('captchaGroup').classList.remove('hidden');
+                $('captchaQuestion').textContent = data.captcha_question;
+                captchaKey = data.captcha_key;
+                $('captchaAnswer').value = '';
+                $('captchaAnswer').focus();
+                $('loginError').classList.add('hidden');
             } else {
-                $('loginError').textContent = 'Invalid password';
+                $('loginError').textContent = data.error || 'Authentication failed';
                 $('loginError').classList.remove('hidden');
+                if (!data.captcha_needed) {
+                    // Reset captcha on other errors
+                    $('captchaGroup').classList.add('hidden');
+                    captchaKey = '';
+                }
             }
         }
 
@@ -777,7 +810,7 @@
             activeSessionId = id;
             term.focus();
 
-            sessions.set(id, { ws, term, fitAddon, container, tab, resizeObserver });
+            sessions.set(id, { ws, term, fitAddon, container, tab, resizeObserver, handleResize });
         }
 
         function switchSession(id) {
@@ -834,6 +867,7 @@
             s.ws.close();
             s.term.dispose();
             if (s.resizeObserver) s.resizeObserver.disconnect();
+            if (s.handleResize) window.removeEventListener('resize', s.handleResize);
             s.tab.remove();
             s.container.remove();
             sessions.delete(id);

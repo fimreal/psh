@@ -48,7 +48,7 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	// Create handler
-	handler := NewHandler(authService, auditLogger, cfg.JWTExpire, loginLimiter, sessionManager, cfg.SSHBlacklist, cfg.DevMode)
+	handler := NewHandler(authService, auditLogger, cfg.JWTExpire, loginLimiter, sessionManager, cfg.SSHBlacklist, cfg.StrictHostKey, cfg.ShowHostKeyDigest, cfg.DevMode)
 
 	return &Server{
 		cfg:            cfg,
@@ -92,7 +92,7 @@ func (s *Server) Run() error {
 
 	// Public routes
 	r.GET("/", s.handler.IndexHandler)
-	r.GET("/api/auth/verify", s.handler.VerifyHandler)
+	r.GET("/api/auth/verify", RateLimitMiddleware(s.cfg.MaxRequestPerMin), s.handler.VerifyHandler)
 	r.POST("/api/auth/login", RateLimitMiddleware(s.cfg.MaxRequestPerMin), s.handler.LoginHandler)
 	r.POST("/api/auth/logout", s.handler.LogoutHandler)
 
@@ -178,6 +178,12 @@ func (s *Server) Run() error {
 	if err := s.auditLogger.Close(); err != nil {
 		log.Warnw("Failed to close audit logger", "error", err)
 	}
+
+	// Close auth service (stop cleanup goroutine)
+	s.authService.Close()
+
+	// Close login limiter (stop cleanup goroutine)
+	s.loginLimiter.Close()
 
 	log.Info("Server stopped")
 	return nil

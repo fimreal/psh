@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -20,6 +21,7 @@ type Config struct {
 	JWTSecret         string
 	JWTExpire         int
 	Passwords         []string
+	PasswordFile      string // Path to file containing passwords (one per line)
 	Debug             bool
 	DevMode           bool // Development mode: disable TLS and password auth
 
@@ -31,7 +33,9 @@ type Config struct {
 	MaxWSConnsPerMin int // Max WebSocket connections per minute per IP (default: 10)
 
 	// SSH security settings
-	SSHBlacklist []string // CIDR ranges blocked from SSH (default: 127.0.0.0/8)
+	SSHBlacklist      []string // CIDR ranges blocked from SSH (default: 127.0.0.0/8)
+	StrictHostKey     bool     // Reject unknown SSH host keys instead of auto-accepting (default: false)
+	ShowHostKeyDigest bool     // Show host key fingerprint when connecting (default: true)
 
 	// CORS settings
 	AllowedOrigins []string // Allowed CORS origins
@@ -79,8 +83,22 @@ func Load(run RunFunc) error {
 				cfg.Passwords = viper.GetStringSlice("PASSWORD")
 			}
 
+			// Load passwords from file if specified
+			if cfg.PasswordFile != "" {
+				passwords, err := loadPasswordsFromFile(cfg.PasswordFile)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error loading password file: %v\n", err)
+					os.Exit(1)
+				}
+				cfg.Passwords = append(cfg.Passwords, passwords...)
+			}
+
 			if len(cfg.Passwords) == 0 && !cfg.DevMode {
-				fmt.Fprintln(os.Stderr, "Error: password is required. Use -P to specify password(s).")
+				fmt.Fprintln(os.Stderr, "Error: password is required.")
+				fmt.Fprintln(os.Stderr, "Secure options:")
+				fmt.Fprintln(os.Stderr, "  --password-file FILE   Read password from file (recommended)")
+				fmt.Fprintln(os.Stderr, "  PSH_PASSWORD env       Set environment variable")
+				fmt.Fprintln(os.Stderr, "  -P PASSWORD            Command line (visible in ps, not recommended)")
 				os.Exit(1)
 			}
 
@@ -116,6 +134,10 @@ func Load(run RunFunc) error {
 			if len(cfg.SSHBlacklist) == 0 && !cfg.DevMode {
 				cfg.SSHBlacklist = []string{"127.0.0.0/8"}
 			}
+			// Default ShowHostKeyDigest to true
+			if !cmd.Flags().Changed("show-host-key") {
+				cfg.ShowHostKeyDigest = true
+			}
 
 			cfg.AuditLogPath = expandTilde(cfg.AuditLogPath)
 			cfg.TLSCertPath = expandTilde(cfg.TLSCertPath)
@@ -136,8 +158,9 @@ func Load(run RunFunc) error {
 	flags.StringVar(&cfg.TLSKeyPath, "tls-key", "", "Path to TLS private key file")
 	flags.BoolVar(&cfg.AutoGenerateCerts, "auto-certs", true, "Auto-generate self-signed TLS certificates")
 	flags.StringVar(&cfg.JWTSecret, "jwt-secret", "", "JWT secret key (auto-generated if not provided)")
-	flags.IntVar(&cfg.JWTExpire, "jwt-expire", 86400, "JWT token expiration time in seconds")
-	flags.StringSliceVarP(&cfg.Passwords, "password", "P", nil, "Password(s) for authentication (can be specified multiple times)")
+	flags.IntVar(&cfg.JWTExpire, "jwt-expire", 14400, "JWT token expiration time in seconds (default: 4 hours)")
+	flags.StringVar(&cfg.PasswordFile, "password-file", "", "Path to file containing passwords (one per line)")
+	flags.StringSliceVarP(&cfg.Passwords, "password", "P", nil, "Password(s) for auth (WARNING: visible in ps, prefer --password-file or PSH_PASSWORD)")
 	flags.BoolVar(&cfg.Debug, "debug", false, "Enable debug logging")
 	flags.BoolVar(&cfg.DevMode, "dev", false, "Development mode: disable TLS, password auth, and SSH blacklist")
 
@@ -150,6 +173,8 @@ func Load(run RunFunc) error {
 
 	// SSH security flags
 	flags.StringSliceVar(&cfg.SSHBlacklist, "ssh-blacklist", []string{"127.0.0.0/8"}, "CIDR ranges blocked from SSH (default: 127.0.0.0/8, use empty string to disable)")
+	flags.BoolVar(&cfg.StrictHostKey, "strict-host-key", false, "Reject unknown SSH host keys instead of auto-accepting")
+	flags.BoolVar(&cfg.ShowHostKeyDigest, "show-host-key", true, "Show host key fingerprint when connecting")
 
 	// CORS flags
 	flags.StringSliceVar(&cfg.AllowedOrigins, "allowed-origins", []string{}, "Allowed CORS origins (e.g., https://example.com)")
@@ -169,4 +194,24 @@ func expandTilde(path string) string {
 		return filepath.Join(home, path[1:])
 	}
 	return path
+}
+
+// loadPasswordsFromFile reads passwords from a file (one per line)
+func loadPasswordsFromFile(path string) ([]string, error) {
+	path = expandTilde(path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read password file: %w", err)
+	}
+
+	var passwords []string
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			passwords = append(passwords, line)
+		}
+	}
+
+	return passwords, nil
 }

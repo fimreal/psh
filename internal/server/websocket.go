@@ -27,8 +27,9 @@ func SetupWebSocketOrigins(origins []string) {
 }
 
 var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
+	ReadBufferSize:    1024,
+	WriteBufferSize:   1024,
+	EnableCompression: true, // Enable permessage-deflate compression (RFC 7692)
 	CheckOrigin: func(r *http.Request) bool {
 		origin := r.Header.Get("Origin")
 		if origin == "" {
@@ -55,16 +56,18 @@ const (
 )
 
 type WSClient struct {
-	conn           *websocket.Conn
-	session        *shell.Session
-	sessionID      string
-	host           string
-	commandBuf     []byte
-	mu             sync.Mutex
-	auditLogger    *audit.Logger
-	done           chan struct{}
-	sessionManager *auth.SessionManager
-	tokenID        string
+	conn              *websocket.Conn
+	session           *shell.Session
+	sessionID         string
+	host              string
+	commandBuf        []byte
+	mu                sync.Mutex
+	auditLogger       *audit.Logger
+	done              chan struct{}
+	sessionManager    *auth.SessionManager
+	tokenID           string
+	strictHostKey     bool
+	showHostKeyDigest bool
 }
 
 // TerminalWSHandler handles WebSocket connections for terminal
@@ -128,13 +131,15 @@ func (h *Handler) TerminalWSHandler(c *gin.Context) {
 	log.Infow("New WebSocket session", "session", sessionID, "host", host, "remote", c.ClientIP())
 
 	client := &WSClient{
-		conn:           conn,
-		sessionID:      sessionID,
-		host:           host,
-		auditLogger:    h.auditLogger,
-		done:           make(chan struct{}),
-		sessionManager: h.sessionManager,
-		tokenID:        tokenID,
+		conn:              conn,
+		sessionID:         sessionID,
+		host:              host,
+		auditLogger:       h.auditLogger,
+		done:              make(chan struct{}),
+		sessionManager:    h.sessionManager,
+		tokenID:           tokenID,
+		strictHostKey:     h.strictHostKey,
+		showHostKeyDigest: h.showHostKeyDigest,
 	}
 
 	client.handleMessages(h.sshBlacklist)
@@ -145,7 +150,7 @@ func (c *WSClient) handleMessages(sshBlacklist []string) {
 	c.sessionManager.AddSession(c.tokenID)
 
 	// Start shell session
-	sess := shell.NewSession(sshBlacklist)
+	sess := shell.NewSession(sshBlacklist, c.strictHostKey, c.showHostKeyDigest)
 	sess.Start()
 	c.session = sess
 
