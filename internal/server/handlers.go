@@ -281,6 +281,7 @@ type WSResponse struct {
 	SessionID string `json:"session_id,omitempty"`
 	Data      string `json:"data,omitempty"`
 	Message   string `json:"message,omitempty"`
+	Host      string `json:"host,omitempty"`
 }
 
 // encodeBase64 encodes data to base64

@@ -142,23 +142,34 @@ func (h *Handler) TerminalWSHandler(c *gin.Context) {
 		showHostKeyDigest: h.showHostKeyDigest,
 	}
 
-	client.handleMessages(h.sshBlacklist)
+	client.handleMessages(h.sshBlacklist, c.ClientIP())
 }
 
-func (c *WSClient) handleMessages(sshBlacklist []string) {
+func (c *WSClient) handleMessages(sshBlacklist []string, clientIP string) {
 	// Register session
 	c.sessionManager.AddSession(c.tokenID)
+	log.Debugw("Session added", "token", c.tokenID, "count", c.sessionManager.GetSessionCount(c.tokenID))
+
+	// Ensure WebSocket connection slot is released on exit
+	defer func() {
+		if tracker := GetWSConnTracker(); tracker != nil && clientIP != "" {
+			tracker.Release(clientIP)
+		}
+	}()
 
 	// Start shell session
 	sess := shell.NewSession(sshBlacklist, c.strictHostKey, c.showHostKeyDigest)
 	sess.Start()
 	c.session = sess
 
-	// Send connected message
-	c.sendMessage(WSResponse{
-		Type:      "connected",
-		SessionID: c.sessionID,
-	})
+	// Set callback for SSH connection
+	sess.OnSSHConnect = func(host string) {
+		c.sendMessage(WSResponse{
+			Type:      "connected",
+			SessionID: c.sessionID,
+			Host:      host,
+		})
+	}
 
 	// Log connection
 	if err := c.auditLogger.LogConnection(c.sessionID, c.host, ""); err != nil {
@@ -203,6 +214,7 @@ func (c *WSClient) handleMessages(sshBlacklist []string) {
 	// Cleanup
 	close(c.done)
 	c.sessionManager.RemoveSession(c.tokenID)
+	log.Debugw("Session removed", "token", c.tokenID, "count", c.sessionManager.GetSessionCount(c.tokenID))
 	if err := c.session.Close(); err != nil {
 		log.Debugw("Failed to close session", "error", err)
 	}

@@ -97,21 +97,79 @@ func RateLimitMiddleware(limit int) gin.HandlerFunc {
 	}
 }
 
-// WSRateLimitMiddleware returns a rate limiting middleware for WebSocket connections
-// It uses a separate limiter to avoid interference with regular HTTP rate limiting
+// WSConnTracker tracks active WebSocket connections per IP
+type WSConnTracker struct {
+	connections map[string]int // IP -> connection count
+	mu          sync.RWMutex
+	maxConns    int
+}
+
+// NewWSConnTracker creates a new WebSocket connection tracker
+func NewWSConnTracker(maxConns int) *WSConnTracker {
+	return &WSConnTracker{
+		connections: make(map[string]int),
+		maxConns:    maxConns,
+	}
+}
+
+// Acquire attempts to acquire a connection slot. Returns true if allowed.
+func (t *WSConnTracker) Acquire(ip string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.connections[ip] >= t.maxConns {
+		return false
+	}
+	t.connections[ip]++
+	return true
+}
+
+// Release releases a connection slot
+func (t *WSConnTracker) Release(ip string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.connections[ip] > 0 {
+		t.connections[ip]--
+		if t.connections[ip] == 0 {
+			delete(t.connections, ip)
+		}
+	}
+}
+
+// wsConnTracker is the global WebSocket connection tracker
+var wsConnTracker *WSConnTracker
+
+// InitWSConnTracker initializes the global WebSocket connection tracker
+func InitWSConnTracker(maxConns int) {
+	wsConnTracker = NewWSConnTracker(maxConns)
+}
+
+// GetWSConnTracker returns the global WebSocket connection tracker
+func GetWSConnTracker() *WSConnTracker {
+	return wsConnTracker
+}
+
+// WSRateLimitMiddleware returns a middleware that limits concurrent WebSocket connections per IP
 func WSRateLimitMiddleware(limit int) gin.HandlerFunc {
-	limiter := NewRateLimiter(limit)
+	// Initialize the global tracker if not already done
+	if wsConnTracker == nil {
+		InitWSConnTracker(limit)
+	}
 
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
 
-		if !limiter.Allow(ip) {
+		if !wsConnTracker.Acquire(ip) {
 			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error": "Too many WebSocket connections, please try again later",
+				"error": "Maximum concurrent WebSocket connections reached",
 			})
 			c.Abort()
 			return
 		}
+
+		// Store IP in context so websocket handler can release it
+		c.Set("ws-client-ip", ip)
 
 		c.Next()
 	}

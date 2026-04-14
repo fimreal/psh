@@ -7,74 +7,102 @@
     <link rel="stylesheet" href="/static/xterm/xterm.css" />
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { height: 100%; overflow: hidden; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #1e1e1e;
             color: #d4d4d4;
-            height: 100vh;
-            height: 100dvh;
-            height: calc(var(--vh, 1vh) * 100);
+            position: fixed;
+            inset: 0;
+            overflow: hidden;
+        }
+        #app {
             display: flex;
             flex-direction: column;
+            position: absolute;
+            inset: 0;
         }
         .header {
             background: #252526;
             border-bottom: 1px solid #3e3e42;
-            padding: 10px;
+            padding: 8px 10px;
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 8px;
         }
-        .logo { font-size: 16px; font-weight: bold; color: #007acc; white-space: nowrap; }
+        .logo { font-size: 14px; font-weight: bold; color: #007acc; white-space: nowrap; }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #dcdcaa;
+            flex-shrink: 0;
+        }
+        .status-dot.connected {
+            background: #4ec9b0;
+        }
+        .status-dot.disconnected {
+            background: #c75450;
+        }
         .tab-bar {
             display: flex;
+            align-items: center;
             gap: 2px;
             flex: 1;
-            margin-left: 10px;
             min-width: 0;
             overflow-x: auto;
             scroll-behavior: smooth;
             -webkit-overflow-scrolling: touch;
+            touch-action: pan-x;
             scrollbar-width: none;
         }
         .tab-bar::-webkit-scrollbar { display: none; }
         .tab { flex-shrink: 0; }
+        .add-tab {
+            background: transparent;
+            border: none;
+            padding: 6px 8px;
+            cursor: pointer;
+            font-size: 18px;
+            color: #888;
+            border-radius: 4px;
+            flex-shrink: 0;
+            line-height: 1;
+            margin-left: 4px;
+        }
+        .add-tab:hover { background: #3e3e42; color: #d4d4d4; }
         .settings-btn {
             background: #3c3c3c;
             border: 1px solid #3e3e42;
             color: #d4d4d4;
-            padding: 6px 12px;
+            padding: 4px 8px;
             border-radius: 4px;
             cursor: pointer;
-            font-size: 13px;
+            font-size: 12px;
         }
         .settings-btn:hover { background: #4e4e52; }
         .tab {
             background: #2d2d30;
             border: 1px solid #3e3e42;
             border-bottom: none;
-            padding: 8px 16px;
+            padding: 6px 12px;
             cursor: pointer;
             display: flex;
             align-items: center;
-            gap: 8px;
-            min-width: 80px;
-            max-width: 150px;
+            gap: 6px;
             border-radius: 4px 4px 0 0;
         }
         .tab.active { background: #1e1e1e; border-bottom: 2px solid #007acc; }
         .tab:hover:not(.active) { background: #3e3e42; }
-        .tab-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
-        .tab-close { width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; border-radius: 3px; font-size: 14px; color: #888; }
+        .tab-title { font-size: 12px; white-space: nowrap; }
+        .tab-close { width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; border-radius: 3px; font-size: 12px; color: #888; }
         .tab-close:hover { background: #c75450; color: white; }
-        .add-tab { background: #2d2d30; border: 1px solid #3e3e42; padding: 8px 12px; cursor: pointer; font-size: 16px; border-radius: 4px; color: #d4d4d4; }
-        .add-tab:hover { background: #3e3e42; }
-        .content { flex: 1; position: relative; min-height: 0; margin-bottom: 8px; }
+        .content { flex: 1; position: relative; min-height: 0; padding-bottom: 16px; }
         .terminal-container { position: absolute; inset: 0; display: none; padding: 8px; overflow: hidden; }
         .terminal-container.active { display: block; }
         /* Force xterm to fill container width */
         .xterm { width: 100%; height: 100%; }
-        .xterm-viewport { width: 100% !important; }
+        .xterm-viewport { width: 100% !important; overflow-y: auto !important; -webkit-overflow-scrolling: touch; }
         .xterm-screen { width: 100% !important; }
         /* Make xterm selection visible */
         .xterm-selection { background: rgba(0, 122, 204, 0.5) !important; }
@@ -114,7 +142,6 @@
         .btn-primary:hover { background: #005a9e; }
         .overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.7); display: none; z-index: 1000; }
         .overlay.active { display: block; }
-        .status-bar { background: #007acc; color: white; padding: 5px 20px; font-size: 12px; display: flex; justify-content: space-between; }
         .hidden { display: none !important; }
         .error-msg { color: #f14c4c; font-size: 13px; margin-top: 10px; }
         .dropdown-panel {
@@ -145,9 +172,9 @@
 
         /* ========== 平板/大手机 (max-width: 768px) ========== */
         @media (max-width: 768px) {
-            .header { padding: 8px; gap: 8px; }
-            .tab { padding: 10px 14px; min-width: 70px; max-width: 120px; }
-            .tab-close { width: 22px; height: 22px; }
+            .header { padding: 6px 8px; gap: 6px; }
+            .tab { padding: 8px 12px; }
+            .tab-close { width: 20px; height: 20px; }
             .dialog { min-width: 300px; padding: 24px; }
             .dialog-title { font-size: 16px; }
             .terminal-container { padding: 6px; }
@@ -157,11 +184,10 @@
         @media (max-width: 480px) {
             .header { padding: 4px 6px; gap: 4px; }
             .logo { font-size: 12px; }
-            .tab-bar { margin-left: 4px; gap: 1px; }
-            .tab { padding: 6px 8px; min-width: 40px; max-width: 80px; }
+            .tab { padding: 6px 8px; }
             .tab-title { font-size: 11px; }
-            .tab-close { width: 18px; height: 18px; font-size: 12px; }
-            .settings-btn, .add-tab { padding: 6px 8px; font-size: 12px; }
+            .tab-close { width: 16px; height: 16px; font-size: 11px; }
+            .settings-btn, .add-tab { padding: 4px 6px; font-size: 11px; }
             .dialog {
                 width: calc(100vw - 32px);
                 max-width: 350px;
@@ -180,24 +206,21 @@
                 max-width: 220px;
             }
             .terminal-container { padding: 4px; }
-            .status-bar { padding: 4px 10px; font-size: 10px; }
-            #connectionInfo { max-width: 50%; overflow: hidden; text-overflow: ellipsis; }
         }
 
         /* ========== 极小屏幕 (max-width: 360px) ========== */
         @media (max-width: 360px) {
             .dialog { width: calc(100vw - 24px); padding: 16px; }
-            .tab { min-width: 40px; max-width: 70px; padding: 6px 8px; }
+            .tab { padding: 4px 6px; }
             .tab-title { font-size: 10px; }
         }
 
         /* ========== 横屏模式 ========== */
         @media (max-width: 768px) and (orientation: landscape) {
-            .header { padding: 4px 8px; }
-            .tab { padding: 4px 10px; }
+            .header { padding: 3px 6px; }
+            .tab { padding: 4px 8px; }
             .tab-title { font-size: 11px; }
-            .tab-close { width: 16px; height: 16px; }
-            .status-bar { padding: 3px 10px; font-size: 10px; }
+            .tab-close { width: 14px; height: 14px; }
             .terminal-container { padding: 2px; }
         }
 
@@ -220,8 +243,8 @@
             flex-wrap: nowrap;
             justify-content: flex-start;
             overflow-x: auto;
-            scroll-behavior: smooth;
-            -webkit-overflow-scrolling: touch;
+            overscroll-behavior: none;
+            touch-action: none;
             scrollbar-width: none;
         }
         .mobile-keys::-webkit-scrollbar { display: none; }
@@ -245,6 +268,9 @@
             background: #007acc;
             border-color: #007acc;
         }
+        .xterm-viewport {
+            touch-action: pan-y;
+        }
         /* 触摸设备显示虚拟按键栏 */
         @media (pointer: coarse) {
             .mobile-keys {
@@ -254,38 +280,35 @@
     </style>
 </head>
 <body>
-    <div class="header">
-        <div class="logo">psh</div>
-        <div class="tab-bar" id="tabBar"></div>
-        <div style="position:relative;">
-            <button class="settings-btn" id="settingsBtn">字体</button>
-            <div class="dropdown-panel" id="settingsPanel">
-                <div class="panel-title">Font Size</div>
-                <div class="font-size-row">
-                    <input type="range" id="fontSizeSlider" min="8" max="32" value="14">
-                    <span class="size-label" id="fontSizeValue">14px</span>
+    <div id="app">
+        <div class="header">
+            <div class="logo">Psh</div>
+            <div class="tab-bar" id="tabBar">
+                <button class="add-tab" id="addTabBtn" title="New Terminal">+</button>
+            </div>
+            <div style="position:relative;">
+                <button class="settings-btn" id="settingsBtn">字体</button>
+                <div class="dropdown-panel" id="settingsPanel">
+                    <div class="panel-title">Font Size</div>
+                    <div class="font-size-row">
+                        <input type="range" id="fontSizeSlider" min="8" max="32" value="14">
+                        <span class="size-label" id="fontSizeValue">14px</span>
+                    </div>
                 </div>
             </div>
         </div>
-        <button class="add-tab" id="addTabBtn" title="New Terminal">+</button>
-    </div>
 
-    <div class="content" id="content">
-        <div class="terminal-container active" id="welcome">
-            <div>
-                <h2>Welcome to psh</h2>
-                <p>Click + to open a new terminal</p>
-                <p style="margin-top: 15px; color: #888;">Run <code>ssh user@host</code> to connect</p>
+        <div class="content" id="content">
+            <div class="terminal-container active" id="welcome">
+                <div>
+                    <h2>Welcome to psh</h2>
+                    <p>Click + to open a new terminal</p>
+                    <p style="margin-top: 15px; color: #888;">Run <code>ssh user@host</code> to connect</p>
+                </div>
             </div>
         </div>
-    </div>
 
-    <div class="status-bar" id="statusBar">
-        <span id="statusText">Ready</span>
-        <span id="connectionInfo"></span>
-    </div>
-
-    <div class="mobile-keys" id="mobileKeys">
+        <div class="mobile-keys" id="mobileKeys">
         <button class="mod-key" data-key="kbd" id="kbdKey">⌨</button>
         <button class="mod-key" data-key="esc">ESC</button>
         <button class="mod-key" data-key="tab">TAB</button>
@@ -295,6 +318,7 @@
         <button class="mod-key" data-key="arrow-up">▲</button>
         <button class="mod-key" data-key="arrow-down">▼</button>
         <button class="mod-key" data-key="arrow-right">▶</button>
+    </div>
     </div>
 
     <div class="overlay" id="overlay"></div>
@@ -443,10 +467,13 @@
             sessions.forEach(s => {
                 s.term.options.fontSize = size;
                 s.fitAddon.fit();
-                // Send new dimensions to backend
+                // Send new dimensions to backend (reduce rows by 1 for bottom margin)
                 const dims = s.fitAddon.proposeDimensions();
-                if (dims && s.ws.readyState === WebSocket.OPEN) {
-                    s.ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
+                if (dims && dims.rows > 1) {
+                    s.term.resize(dims.cols, dims.rows - 1);
+                    if (s.ws.readyState === WebSocket.OPEN) {
+                        s.ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows - 1 }));
+                    }
                 }
             });
         }
@@ -456,36 +483,52 @@
         }
 
         async function init() {
-            // 虚拟键盘适配 - 更新视口高度并触发终端 resize
+            // 动态调整 app 高度以适应键盘
+            const app = $('app');
+            const updateAppHeight = () => {
+                if ('visualViewport' in window) {
+                    app.style.height = `${window.visualViewport.height}px`;
+                }
+            };
+
             if ('visualViewport' in window) {
-                const handleViewportChange = () => {
-                    const vh = window.visualViewport.height * 0.01;
-                    document.documentElement.style.setProperty('--vh', `${vh}px`);
-                    // 触发窗口 resize 事件，让终端重新 fit
-                    window.dispatchEvent(new Event('resize'));
-                };
-                window.visualViewport.addEventListener('resize', handleViewportChange);
-                window.visualViewport.addEventListener('scroll', handleViewportChange);
-                handleViewportChange();
+                window.visualViewport.addEventListener('resize', () => {
+                    updateAppHeight();
+                    // 延迟触发 resize 让终端重新 fit
+                    setTimeout(() => {
+                        window.dispatchEvent(new Event('resize'));
+                    }, 100);
+                });
+                updateAppHeight();
             }
+
+            // 禁止页面滚动
+            document.addEventListener('touchmove', (e) => {
+                // 允许终端内部滚动和标签栏滚动
+                if (e.target.closest('.xterm-viewport') || e.target.closest('.tab-bar')) return;
+                e.preventDefault();
+            }, { passive: false });
+
+            // 禁止橡皮筋效果（但允许按钮等交互元素）
+            document.body.addEventListener('touchstart', (e) => {
+                const target = e.target;
+                // 允许的元素：终端滚动、按钮、标签页、输入框、tab栏滚动
+                if (target.closest('.xterm-viewport') ||
+                    target.closest('.tab-bar') ||
+                    target.closest('button') ||
+                    target.closest('.tab') ||
+                    target.closest('input') ||
+                    target.closest('.mod-key')) {
+                    return;
+                }
+                e.preventDefault();
+            }, { passive: false });
 
             $('addTabBtn').onclick = () => createSession();
             $('loginBtn').onclick = handleLogin;
             $('loginPassword').onkeypress = e => { if (e.key === 'Enter') handleLogin(); };
             $('captchaAnswer').onkeypress = e => { if (e.key === 'Enter') handleLogin(); };
             setupMobileKeys();
-
-            // Keep keyboard open when tapping status bar
-            $('statusBar').addEventListener('touchstart', (e) => {
-                e.preventDefault();
-                const s = sessions.get(activeSessionId);
-                if (s) {
-                    const textarea = s.container.querySelector('.xterm-helper-textarea');
-                    if (textarea && document.activeElement !== textarea) {
-                        textarea.focus();
-                    }
-                }
-            }, { passive: false });
 
             $('settingsBtn').onclick = e => {
                 e.stopPropagation();
@@ -590,7 +633,7 @@
             const tab = document.createElement('div');
             tab.className = 'tab';
             tab.id = 'tab-' + id;
-            tab.innerHTML = `<span class="tab-title">Shell ${sessionCount}</span><span class="tab-close">×</span>`;
+            tab.innerHTML = `<span class="status-dot" id="dot-${id}"></span><span class="tab-title">Shell ${sessionCount}</span><span class="tab-close">×</span>`;
             tab.onclick = e => {
                 if (e.target.classList.contains('tab-close')) closeSession(id);
                 else switchSession(id);
@@ -609,7 +652,8 @@
             tab.ondragend = () => {
                 tab.classList.remove('dragging');
             };
-            $('tabBar').appendChild(tab);
+            // Insert tab before the add button
+            $('tabBar').insertBefore(tab, $('addTabBtn'));
 
             // Create terminal container
             const container = document.createElement('div');
@@ -639,6 +683,12 @@
             term.loadAddon(fitAddon);
             term.open(container);
             fitAddon.fit();
+
+            // Reduce rows by 1 to leave space at bottom for macOS rounded corners
+            const dims = fitAddon.proposeDimensions();
+            if (dims && dims.rows > 1) {
+                term.resize(dims.cols, dims.rows - 1);
+            }
 
             // Right-click context menu (desktop)
             container.addEventListener('contextmenu', (e) => {
@@ -702,7 +752,8 @@
                     if (msg.type === 'output') {
                         term.write(base64Decode(msg.data));
                     } else if (msg.type === 'connected') {
-                        $('statusText').textContent = 'Connected';
+                        $(`dot-${id}`).classList.add('connected');
+                        $(`dot-${id}`).classList.remove('disconnected');
                     } else if (msg.type === 'error') {
                         term.writeln('\x1b[31mError: ' + msg.message + '\x1b[0m');
                     }
@@ -713,7 +764,8 @@
 
             ws.onclose = () => {
                 term.writeln('\x1b[33mConnection closed.\x1b[0m');
-                $('statusText').textContent = 'Disconnected';
+                $(`dot-${id}`).classList.remove('connected');
+                $(`dot-${id}`).classList.add('disconnected');
             };
 
             ws.onerror = () => term.writeln('\x1b[31mWebSocket error\x1b[0m');
@@ -788,7 +840,13 @@
                 resizeTimeout = setTimeout(() => {
                     fitAddon.fit();
                     const dims = fitAddon.proposeDimensions();
-                    if (ws.readyState === WebSocket.OPEN && dims) {
+                    if (dims && dims.rows > 1) {
+                        // Reduce rows by 1 to leave space at bottom for macOS rounded corners
+                        term.resize(dims.cols, dims.rows - 1);
+                        if (ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows - 1 }));
+                        }
+                    } else if (ws.readyState === WebSocket.OPEN && dims) {
                         ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
                     }
                 }, 50);
@@ -864,7 +922,16 @@
         function closeSession(id) {
             const s = sessions.get(id);
             if (!s) return;
-            s.ws.close();
+
+            // 在删除之前获取tabs列表，用于确定切换目标
+            const tabs = Array.from($('tabBar').querySelectorAll('.tab'));
+            const closedIndex = tabs.findIndex(t => t.id === 'tab-' + id);
+
+            // Close WebSocket
+            if (s.ws && s.ws.readyState === WebSocket.OPEN) {
+                s.ws.close();
+            }
+
             s.term.dispose();
             if (s.resizeObserver) s.resizeObserver.disconnect();
             if (s.handleResize) window.removeEventListener('resize', s.handleResize);
@@ -873,13 +940,29 @@
             sessions.delete(id);
 
             if (activeSessionId === id) {
-                const next = sessions.keys().next().value;
-                if (next) switchSession(next);
-                else {
-                    activeSessionId = null;
-                    $('welcome').classList.add('active');
-                    $('statusText').textContent = 'Ready';
-                    $('connectionInfo').textContent = '';
+                let nextId = null;
+
+                // 优先选择右边的tab，然后是左边
+                if (closedIndex < tabs.length - 1) {
+                    // 有右边的tab
+                    const nextTab = tabs[closedIndex + 1];
+                    if (nextTab) nextId = nextTab.id.replace('tab-', '');
+                } else if (closedIndex > 0) {
+                    // 有左边的tab
+                    const prevTab = tabs[closedIndex - 1];
+                    if (prevTab) nextId = prevTab.id.replace('tab-', '');
+                }
+
+                if (nextId && sessions.has(nextId)) {
+                    switchSession(nextId);
+                } else {
+                    // Fallback to first session
+                    const first = sessions.keys().next().value;
+                    if (first) switchSession(first);
+                    else {
+                        activeSessionId = null;
+                        $('welcome').classList.add('active');
+                    }
                 }
             }
         }

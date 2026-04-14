@@ -3,6 +3,7 @@ package shell
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -47,6 +48,11 @@ type Session struct {
 	pendingSSHPort   int
 	pendingSigners   []ssh.Signer
 
+	// SSH connection cancellation
+	connecting      bool
+	cancelConnect   context.CancelFunc
+	connectCancelMu sync.Mutex
+
 	// SSH security
 	sshBlacklist      []*net.IPNet
 	strictHostKey     bool // Reject unknown hosts instead of auto-accepting
@@ -56,6 +62,9 @@ type Session struct {
 	cmdHistory []string
 	historyIdx int
 	savedLine  string // line saved before browsing history
+
+	// Callback for SSH connection
+	OnSSHConnect func(host string)
 }
 
 // NewSession creates a restricted shell session
@@ -201,6 +210,17 @@ func (s *Session) loadSSHConfig() {
 func (s *Session) Write(data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Ctrl+C during connection attempt - cancel the connection
+	if len(data) == 1 && data[0] == 0x03 && s.connecting {
+		s.connectCancelMu.Lock()
+		if s.cancelConnect != nil {
+			s.cancelConnect()
+			s.cancelConnect = nil
+		}
+		s.connectCancelMu.Unlock()
+		return nil
+	}
 
 	if s.sshClient != nil {
 		if s.sshStdin != nil {
@@ -539,19 +559,45 @@ func (s *Session) tryConnect(host string, port int, authMethods []ssh.AuthMethod
 }
 
 func (s *Session) tryConnectWithFallback(host string, port int, authMethods []ssh.AuthMethod, allowPasswordFallback bool) {
+	// Create context for cancellation
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Store cancel function for Ctrl+C
+	s.connectCancelMu.Lock()
+	s.connecting = true
+	s.cancelConnect = cancel
+	s.connectCancelMu.Unlock()
+
+	// Cleanup on exit
+	defer func() {
+		s.connectCancelMu.Lock()
+		s.connecting = false
+		s.cancelConnect = nil
+		s.connectCancelMu.Unlock()
+	}()
+
 	config := &ssh.ClientConfig{
 		User: s.pendingSSHUser,
 		Auth: authMethods,
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 			return s.verifyHostKey(hostname, key)
 		},
-		Timeout: 10 * time.Second,
+		Timeout: 0, // We use context for timeout
 	}
 
-	// Connect
+	// Connect with context support
 	addr := fmt.Sprintf("%s:%d", host, port)
-	client, err := ssh.Dial("tcp", addr, config)
+
+	// Use net.DialContext for cancellable connection
+	dialer := &net.Dialer{}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
+		if ctx.Err() == context.Canceled {
+			s.outputChan <- []byte("\r\nConnection cancelled.\r\n")
+			s.printPrompt()
+			return
+		}
 		// Check if this was a key auth failure and we should prompt for password
 		if allowPasswordFallback && strings.Contains(err.Error(), "unable to authenticate") {
 			s.outputChan <- []byte("SSH key authentication failed.\r\n")
@@ -562,6 +608,26 @@ func (s *Session) tryConnectWithFallback(host string, port int, authMethods []ss
 		s.printPrompt()
 		return
 	}
+
+	// Establish SSH connection
+	sshConn, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
+	if err != nil {
+		if ctx.Err() == context.Canceled {
+			s.outputChan <- []byte("\r\nConnection cancelled.\r\n")
+			s.printPrompt()
+			return
+		}
+		if allowPasswordFallback && strings.Contains(err.Error(), "unable to authenticate") {
+			s.outputChan <- []byte("SSH key authentication failed.\r\n")
+			s.promptPassword()
+			return
+		}
+		s.outputChan <- fmt.Appendf(nil, "\r\nSSH handshake failed: %s\r\n", err)
+		s.printPrompt()
+		return
+	}
+
+	client := ssh.NewClient(sshConn, chans, reqs)
 
 	// Create session
 	session, err := client.NewSession()
@@ -605,6 +671,11 @@ func (s *Session) tryConnectWithFallback(host string, port int, authMethods []ss
 	s.mu.Unlock()
 
 	s.outputChan <- []byte("\r\nConnected!\r\n")
+
+	// Notify SSH connection
+	if s.OnSSHConnect != nil {
+		s.OnSSHConnect(host)
+	}
 
 	go s.sshOutputReader()
 }
