@@ -18,6 +18,11 @@ const (
 	EventDisconnection EventType = "disconnection"
 	EventError         EventType = "error"
 	EventCommand       EventType = "command"
+
+	// API-specific event types
+	EventAPISessionCreate EventType = "api_session_create"
+	EventAPISessionClose  EventType = "api_session_close"
+	EventAPIExec          EventType = "api_exec"
 )
 
 // Audit levels
@@ -275,6 +280,18 @@ func (l *Logger) LogError(sessionID, host, errMsg string) error {
 		SessionID: sessionID,
 		Host:      host,
 		Error:     errMsg,
+	})
+}
+
+// LogAPIEvent logs an API-specific audit event.
+// Used by the API layer for session create/close/exec events.
+func (l *Logger) LogAPIEvent(eventType EventType, sessionID, host, user, command string) error {
+	return l.writeEvent(Event{
+		Type:      eventType,
+		SessionID: sessionID,
+		Host:      host,
+		User:      user,
+		Command:   sanitizeForLog(command),
 	})
 }
 

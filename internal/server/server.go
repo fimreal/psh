@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	log "github.com/fimreal/goutils/ezap"
 
+	"github.com/fimreal/psh/internal/api"
 	"github.com/fimreal/psh/internal/audit"
 	"github.com/fimreal/psh/internal/auth"
 	"github.com/fimreal/psh/internal/config"
@@ -28,6 +30,10 @@ type Server struct {
 	handler        *Handler
 	loginLimiter   *auth.LoginLimiter
 	sessionManager *auth.SessionManager
+
+	// API (optional)
+	apiHandler     *api.Handler
+	apiSessionMgr  *api.SessionManager
 }
 
 func New(cfg *config.Config) (*Server, error) {
@@ -50,14 +56,32 @@ func New(cfg *config.Config) (*Server, error) {
 	// Create handler
 	handler := NewHandler(authService, auditLogger, cfg.JWTExpire, loginLimiter, sessionManager, cfg.SSHBlacklist, cfg.StrictHostKey, cfg.ShowHostKeyDigest, cfg.DevMode)
 
-	return &Server{
+	srv := &Server{
 		cfg:            cfg,
 		authService:    authService,
 		auditLogger:    auditLogger,
 		handler:        handler,
 		loginLimiter:   loginLimiter,
 		sessionManager: sessionManager,
-	}, nil
+	}
+
+	// Initialize API if enabled
+	if cfg.APIEnabled {
+		apiKeys, err := loadAPIKeys(cfg.APIKeys)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load API keys: %w", err)
+		}
+		if len(apiKeys) == 0 {
+			return nil, fmt.Errorf("API enabled but no API keys configured (set PSH_API_KEYS or --api-keys)")
+		}
+		apiSessionMgr := api.NewSessionManager(cfg.APISessionTimeout, cfg.APISessionMaxLife)
+		apiHandler := api.NewHandler(apiSessionMgr, auditLogger, apiKeys, cfg.APIAllowedHosts, cfg.APIExecTimeout)
+		srv.apiHandler = apiHandler
+		srv.apiSessionMgr = apiSessionMgr
+		log.Infow("REST API enabled", "allowed_hosts", cfg.APIAllowedHosts, "api_keys", len(apiKeys))
+	}
+
+	return srv, nil
 }
 
 func (s *Server) Run() error {
@@ -107,6 +131,12 @@ func (s *Server) Run() error {
 		log.Warn("DEV MODE: Authentication disabled")
 	}
 	protected.GET("/ws/terminal", WSRateLimitMiddleware(s.cfg.MaxWSConnsPerMin), s.handler.TerminalWSHandler)
+
+	// API routes (separate auth, does not touch web auth)
+	if s.cfg.APIEnabled && s.apiHandler != nil {
+		s.apiHandler.RegisterRoutes(r, RateLimitMiddleware(s.cfg.MaxRequestPerMin))
+		log.Info("API v1 routes registered at /api/v1/sessions")
+	}
 
 	// Create HTTP server
 	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
@@ -185,6 +215,51 @@ func (s *Server) Run() error {
 	// Close login limiter (stop cleanup goroutine)
 	s.loginLimiter.Close()
 
+	// Close API session manager (closes all SSH sessions)
+	if s.apiSessionMgr != nil {
+		s.apiSessionMgr.Close()
+	}
+
 	log.Info("Server stopped")
 	return nil
+}
+
+// loadAPIKeys loads API keys from a list of values. Each value is either a
+// literal key or a path to a file containing one key per line.
+// Returns a map of key -> APIKeyConfig.
+func loadAPIKeys(raw []string) (map[string]api.APIKeyConfig, error) {
+	keys := make(map[string]api.APIKeyConfig)
+	idx := 0
+	for _, entry := range raw {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		// If the entry is a path to an existing file, read keys from it
+		if info, err := os.Stat(entry); err == nil && !info.IsDir() {
+			data, err := os.ReadFile(entry)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read API key file %s: %w", entry, err)
+			}
+			for _, line := range strings.Split(string(data), "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" || strings.HasPrefix(line, "#") {
+					continue
+				}
+				idx++
+				keys[line] = api.APIKeyConfig{
+					Key:        line,
+					Identifier: fmt.Sprintf("apikey-%d", idx),
+				}
+			}
+			continue
+		}
+		// Otherwise treat as a literal key
+		idx++
+		keys[entry] = api.APIKeyConfig{
+			Key:        entry,
+			Identifier: fmt.Sprintf("apikey-%d", idx),
+		}
+	}
+	return keys, nil
 }

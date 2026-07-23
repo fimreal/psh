@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -39,6 +40,14 @@ type Config struct {
 
 	// CORS settings
 	AllowedOrigins []string // Allowed CORS origins
+
+	// API settings
+	APIEnabled       bool          // Enable REST API (default: false)
+	APIKeys          []string      // Comma-separated API keys (or path to file)
+	APIAllowedHosts  []string      // Comma-separated allowed SSH hosts for API
+	APISessionTimeout time.Duration // Idle timeout for API sessions (default: 10m)
+	APISessionMaxLife time.Duration // Max session lifetime (default: 1h)
+	APIExecTimeout   time.Duration // Max command execution timeout (default: 300s)
 }
 
 // RunFunc is the function to run after config is loaded
@@ -81,6 +90,26 @@ func Load(run RunFunc) error {
 			}
 			if viper.IsSet("PASSWORD") {
 				cfg.Passwords = viper.GetStringSlice("PASSWORD")
+			}
+
+			// API settings
+			if viper.IsSet("API_ENABLED") {
+				cfg.APIEnabled = viper.GetBool("API_ENABLED")
+			}
+			if viper.IsSet("API_KEYS") {
+				cfg.APIKeys = viper.GetStringSlice("API_KEYS")
+			}
+			if viper.IsSet("API_ALLOWED_HOSTS") {
+				cfg.APIAllowedHosts = viper.GetStringSlice("API_ALLOWED_HOSTS")
+			}
+			if viper.IsSet("API_SESSION_TIMEOUT") {
+				cfg.APISessionTimeout = viper.GetDuration("API_SESSION_TIMEOUT")
+			}
+			if viper.IsSet("API_SESSION_MAX_LIFE") {
+				cfg.APISessionMaxLife = viper.GetDuration("API_SESSION_MAX_LIFE")
+			}
+			if viper.IsSet("API_EXEC_TIMEOUT") {
+				cfg.APIExecTimeout = viper.GetDuration("API_EXEC_TIMEOUT")
 			}
 
 			// Load passwords from file if specified
@@ -139,6 +168,17 @@ func Load(run RunFunc) error {
 				cfg.ShowHostKeyDigest = true
 			}
 
+			// API defaults
+			if cfg.APISessionTimeout == 0 {
+				cfg.APISessionTimeout = 10 * time.Minute
+			}
+			if cfg.APISessionMaxLife == 0 {
+				cfg.APISessionMaxLife = 1 * time.Hour
+			}
+			if cfg.APIExecTimeout == 0 {
+				cfg.APIExecTimeout = 300 * time.Second
+			}
+
 			cfg.AuditLogPath = expandTilde(cfg.AuditLogPath)
 			cfg.TLSCertPath = expandTilde(cfg.TLSCertPath)
 			cfg.TLSKeyPath = expandTilde(cfg.TLSKeyPath)
@@ -178,6 +218,14 @@ func Load(run RunFunc) error {
 
 	// CORS flags
 	flags.StringSliceVar(&cfg.AllowedOrigins, "allowed-origins", []string{}, "Allowed CORS origins (e.g., https://example.com)")
+
+	// API flags
+	flags.BoolVar(&cfg.APIEnabled, "api-enabled", false, "Enable REST API for AI agents (default: false)")
+	flags.StringSliceVar(&cfg.APIKeys, "api-keys", nil, "Comma-separated API keys (or path to file with one key per line)")
+	flags.StringSliceVar(&cfg.APIAllowedHosts, "api-allowed-hosts", nil, "Comma-separated SSH hosts allowed for API access")
+	flags.DurationVar(&cfg.APISessionTimeout, "api-session-timeout", 10*time.Minute, "API session idle timeout (default: 10m)")
+	flags.DurationVar(&cfg.APISessionMaxLife, "api-session-max-life", 1*time.Hour, "API session max lifetime (default: 1h)")
+	flags.DurationVar(&cfg.APIExecTimeout, "api-exec-timeout", 300*time.Second, "API max command execution timeout (default: 300s)")
 
 	viper.AutomaticEnv()
 	viper.SetEnvPrefix("PSH")
