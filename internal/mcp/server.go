@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,11 +17,12 @@ import (
 
 // Server implements a JSON-RPC 2.0 based MCP server over stdio.
 type Server struct {
-	sessionMgr  *api.SessionManager
-	auditLogger *audit.Logger
-	apiKeyID    string
-	mu          sync.Mutex
-	writer      *bufio.Writer
+	sessionMgr   *api.SessionManager
+	auditLogger  *audit.Logger
+	apiKeyID     string
+	allowedHosts map[string]bool
+	mu           sync.Mutex
+	writer       *bufio.Writer
 }
 
 // Config holds MCP server configuration.
@@ -43,12 +45,27 @@ func NewServer(cfg Config) (*Server, error) {
 
 	sessionMgr := api.NewSessionManager(cfg.SessionTimeout, cfg.SessionMaxLife)
 
+	hostSet := make(map[string]bool, len(cfg.AllowedHosts))
+	for _, h := range cfg.AllowedHosts {
+		hostSet[strings.TrimSpace(h)] = true
+	}
+
 	return &Server{
-		sessionMgr:  sessionMgr,
-		auditLogger: auditLogger,
-		apiKeyID:    cfg.APIKeyID,
-		writer:      bufio.NewWriter(os.Stdout),
+		sessionMgr:   sessionMgr,
+		auditLogger:  auditLogger,
+		apiKeyID:     cfg.APIKeyID,
+		allowedHosts: hostSet,
+		writer:       bufio.NewWriter(os.Stdout),
 	}, nil
+}
+
+// isHostAllowed checks whether the given host is in the allowed hosts whitelist.
+// An empty whitelist means no hosts are allowed (fail-closed).
+func (s *Server) isHostAllowed(host string) bool {
+	if len(s.allowedHosts) == 0 {
+		return false
+	}
+	return s.allowedHosts[host]
 }
 
 // --- JSON-RPC types ---
@@ -301,6 +318,12 @@ func (s *Server) toolSSHExec(req *jsonRPCRequest, rawArgs json.RawMessage) {
 		return
 	}
 
+	// Validate host against whitelist
+	if !s.isHostAllowed(input.Host) {
+		s.sendToolError(req.ID, "host not in allowed hosts whitelist")
+		return
+	}
+
 	// Resolve SSH config
 	sshCfg, err := api.ResolveSSHConfig(input.Host)
 	if err != nil {
@@ -346,6 +369,12 @@ func (s *Server) toolSessionCreate(req *jsonRPCRequest, rawArgs json.RawMessage)
 
 	if input.Host == "" {
 		s.sendToolError(req.ID, "host is required")
+		return
+	}
+
+	// Validate host against whitelist
+	if !s.isHostAllowed(input.Host) {
+		s.sendToolError(req.ID, "host not in allowed hosts whitelist")
 		return
 	}
 

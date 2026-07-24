@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	log "github.com/fimreal/goutils/ezap"
@@ -19,10 +20,22 @@ func main() {
 	auditLevel := getEnv("PSH_AUDIT_LEVEL", "command")
 	apiKeyID := getEnv("PSH_API_KEY_ID", "mcp-server")
 
+	// Parse allowed hosts from comma-separated env var
+	var allowedHosts []string
+	if raw := os.Getenv("PSH_API_ALLOWED_HOSTS"); raw != "" {
+		for _, h := range strings.Split(raw, ",") {
+			h = strings.TrimSpace(h)
+			if h != "" {
+				allowedHosts = append(allowedHosts, h)
+			}
+		}
+	}
+
 	cfg := mcp.Config{
 		SessionTimeout: sessionTimeout,
 		SessionMaxLife: sessionMaxLife,
 		ExecTimeout:    execTimeout,
+		AllowedHosts:   allowedHosts,
 		AuditLogPath:   auditLogPath,
 		AuditLevel:     auditLevel,
 		APIKeyID:       apiKeyID,
