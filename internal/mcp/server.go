@@ -21,20 +21,33 @@ type Server struct {
 	auditLogger  *audit.Logger
 	apiKeyID     string
 	allowedHosts map[string]bool
+	limiter      *RateLimiter
 	mu           sync.Mutex
 	writer       *bufio.Writer
 }
 
 // Config holds MCP server configuration.
 type Config struct {
-	SessionTimeout  time.Duration
-	SessionMaxLife  time.Duration
-	ExecTimeout     time.Duration
-	AllowedHosts    []string
-	AuditLogPath    string
-	AuditLevel      string
-	APIKeyID        string
+	SessionTimeout time.Duration
+	SessionMaxLife time.Duration
+	ExecTimeout    time.Duration
+	AllowedHosts   []string
+	AuditLogPath   string
+	AuditLevel     string
+	APIKeyID       string
+
+	// Rate limiting
+	RateLimit   int           // max tool calls per client per RateWindow (default: 10)
+	RateWindow  time.Duration // sliding window for rate limiting (default: 1m)
+	MaxSessions int           // max concurrent SSH sessions (default: 5, 0 = unlimited)
 }
+
+// Default rate limiting values.
+const (
+	DefaultRateLimit   = 10
+	DefaultRateWindow  = time.Minute
+	DefaultMaxSessions = 5
+)
 
 // NewServer creates a new MCP server.
 func NewServer(cfg Config) (*Server, error) {
@@ -50,11 +63,30 @@ func NewServer(cfg Config) (*Server, error) {
 		hostSet[strings.TrimSpace(h)] = true
 	}
 
+	// Apply rate limiting defaults.
+	rateLimit := cfg.RateLimit
+	if rateLimit <= 0 {
+		rateLimit = DefaultRateLimit
+	}
+	rateWindow := cfg.RateWindow
+	if rateWindow <= 0 {
+		rateWindow = DefaultRateWindow
+	}
+	maxSessions := cfg.MaxSessions
+	if maxSessions < 0 {
+		maxSessions = 0
+	} else if maxSessions == 0 {
+		maxSessions = DefaultMaxSessions
+	}
+
+	limiter := NewRateLimiter(rateLimit, rateWindow, maxSessions)
+
 	return &Server{
 		sessionMgr:   sessionMgr,
 		auditLogger:  auditLogger,
 		apiKeyID:     cfg.APIKeyID,
 		allowedHosts: hostSet,
+		limiter:      limiter,
 		writer:       bufio.NewWriter(os.Stdout),
 	}, nil
 }
@@ -197,6 +229,9 @@ func (s *Server) Run() error {
 func (s *Server) Close() {
 	s.sessionMgr.Close()
 	s.auditLogger.Close()
+	if s.limiter != nil {
+		s.limiter.Close()
+	}
 }
 
 func (s *Server) handleRequest(req *jsonRPCRequest) {
@@ -283,10 +318,23 @@ func (s *Server) handleToolsList(req *jsonRPCRequest) {
 	s.sendResult(req.ID, toolsListResult{Tools: tools})
 }
 
+// stdioClient is the rate-limit client identifier for the stdio transport.
+// A stdio MCP server has a single connected client (the process on the other
+// end of the pipe), so all tool calls share this identifier.
+const stdioClient = "stdio"
+
 func (s *Server) handleToolsCall(req *jsonRPCRequest) {
 	var params toolCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		s.sendError(req.ID, -32602, "Invalid params")
+		return
+	}
+
+	// Enforce per-client rate limit on every tool call.
+	if s.limiter != nil && !s.limiter.Allow(stdioClient) {
+		s.sendError(req.ID, errCodeRateLimited,
+			fmt.Sprintf("rate limit exceeded: max %d tool calls per %s",
+				s.limiter.limit, s.limiter.window))
 		return
 	}
 
@@ -306,6 +354,24 @@ func (s *Server) handleToolsCall(req *jsonRPCRequest) {
 
 // --- Tool implementations ---
 
+// JSON-RPC error code returned when a request is rate limited.
+const errCodeRateLimited = -32000
+
+// checkSessionCap reports whether a new SSH session may be created. When the
+// concurrent-session cap is reached it sends a tool error and returns false.
+func (s *Server) checkSessionCap(req *jsonRPCRequest) bool {
+	if s.limiter == nil {
+		return true
+	}
+	current := len(s.sessionMgr.ListSessions())
+	if !s.limiter.AllowSession(current) {
+		s.sendToolError(req.ID,
+			fmt.Sprintf("concurrent session limit exceeded: max %d sessions", s.limiter.MaxSessions()))
+		return false
+	}
+	return true
+}
+
 func (s *Server) toolSSHExec(req *jsonRPCRequest, rawArgs json.RawMessage) {
 	var input sshExecInput
 	if err := json.Unmarshal(rawArgs, &input); err != nil {
@@ -321,6 +387,11 @@ func (s *Server) toolSSHExec(req *jsonRPCRequest, rawArgs json.RawMessage) {
 	// Validate host against whitelist
 	if !s.isHostAllowed(input.Host) {
 		s.sendToolError(req.ID, "host not in allowed hosts whitelist")
+		return
+	}
+
+	// Enforce concurrent-session cap before opening a new connection.
+	if !s.checkSessionCap(req) {
 		return
 	}
 
@@ -375,6 +446,11 @@ func (s *Server) toolSessionCreate(req *jsonRPCRequest, rawArgs json.RawMessage)
 	// Validate host against whitelist
 	if !s.isHostAllowed(input.Host) {
 		s.sendToolError(req.ID, "host not in allowed hosts whitelist")
+		return
+	}
+
+	// Enforce concurrent-session cap before opening a new connection.
+	if !s.checkSessionCap(req) {
 		return
 	}
 

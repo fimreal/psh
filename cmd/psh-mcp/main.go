@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,6 +32,11 @@ func main() {
 		}
 	}
 
+	// Rate limiting configuration
+	rateLimit := parseInt("PSH_MCP_RATE_LIMIT", mcp.DefaultRateLimit)
+	rateWindow := parseDuration("PSH_MCP_RATE_WINDOW", mcp.DefaultRateWindow)
+	maxSessions := parseInt("PSH_MCP_MAX_SESSIONS", mcp.DefaultMaxSessions)
+
 	cfg := mcp.Config{
 		SessionTimeout: sessionTimeout,
 		SessionMaxLife: sessionMaxLife,
@@ -39,6 +45,9 @@ func main() {
 		AuditLogPath:   auditLogPath,
 		AuditLevel:     auditLevel,
 		APIKeyID:       apiKeyID,
+		RateLimit:      rateLimit,
+		RateWindow:     rateWindow,
+		MaxSessions:    maxSessions,
 	}
 
 	srv, err := mcp.NewServer(cfg)
@@ -48,7 +57,11 @@ func main() {
 	}
 	defer srv.Close()
 
-	log.Info("psh-mcp server starting (stdio mode)")
+	log.Infow("psh-mcp server starting (stdio mode)",
+		"rate_limit", rateLimit,
+		"rate_window", rateWindow.String(),
+		"max_sessions", maxSessions,
+	)
 
 	if err := srv.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
@@ -74,4 +87,16 @@ func getEnv(key, defaultVal string) string {
 		return defaultVal
 	}
 	return val
+}
+
+func parseInt(envKey string, defaultVal int) int {
+	val := os.Getenv(envKey)
+	if val == "" {
+		return defaultVal
+	}
+	n, err := strconv.Atoi(val)
+	if err != nil {
+		return defaultVal
+	}
+	return n
 }
