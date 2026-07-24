@@ -89,7 +89,7 @@ func Load(run RunFunc) error {
 				cfg.JWTExpire = viper.GetInt("JWT_EXPIRE")
 			}
 			if viper.IsSet("PASSWORD") {
-				cfg.Passwords = viper.GetStringSlice("PASSWORD")
+				cfg.Passwords = getStringSliceEnv("PASSWORD")
 			}
 
 			// API settings
@@ -97,10 +97,10 @@ func Load(run RunFunc) error {
 				cfg.APIEnabled = viper.GetBool("API_ENABLED")
 			}
 			if viper.IsSet("API_KEYS") {
-				cfg.APIKeys = viper.GetStringSlice("API_KEYS")
+				cfg.APIKeys = getStringSliceEnv("API_KEYS")
 			}
 			if viper.IsSet("API_ALLOWED_HOSTS") {
-				cfg.APIAllowedHosts = viper.GetStringSlice("API_ALLOWED_HOSTS")
+				cfg.APIAllowedHosts = getStringSliceEnv("API_ALLOWED_HOSTS")
 			}
 			if viper.IsSet("API_SESSION_TIMEOUT") {
 				cfg.APISessionTimeout = viper.GetDuration("API_SESSION_TIMEOUT")
@@ -242,6 +242,41 @@ func expandTilde(path string) string {
 		return filepath.Join(home, path[1:])
 	}
 	return path
+}
+
+// getStringSliceEnv reads a string-slice config value, correctly handling
+// comma-separated environment variables. viper.GetStringSlice does NOT split
+// a comma-separated env var value (it returns the whole string as a single
+// element), so we inspect the raw value: if it is already a []string (e.g.
+// from a --flag) we use it as-is; if it is a string (e.g. from an env var)
+// we split it on commas.
+func getStringSliceEnv(key string) []string {
+	switch v := viper.Get(key).(type) {
+	case []string:
+		out := make([]string, 0, len(v))
+		for _, p := range v {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				out = append(out, p)
+			}
+		}
+		return out
+	case string:
+		if v == "" {
+			return nil
+		}
+		parts := strings.Split(v, ",")
+		out := make([]string, 0, len(parts))
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				out = append(out, p)
+			}
+		}
+		return out
+	default:
+		return viper.GetStringSlice(key)
+	}
 }
 
 // loadPasswordsFromFile reads passwords from a file (one per line)
