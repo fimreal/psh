@@ -122,6 +122,12 @@ type rpcError struct {
 	Data    interface{} `json:"data,omitempty"`
 }
 
+// sendFunc delivers a JSON-RPC response to the requesting client. The stdio
+// transport writes to stdout; the SSE transport pushes to a per-connection
+// event stream. The client argument carried through handleRequest identifies
+// the caller for rate limiting and audit logging.
+type sendFunc func(resp jsonRPCResponse)
+
 // --- MCP protocol types ---
 
 type initializeResult struct {
@@ -150,9 +156,9 @@ type tool struct {
 }
 
 type inputSchema struct {
-	Type       string                 `json:"type"`
-	Properties map[string]property    `json:"properties,omitempty"`
-	Required   []string               `json:"required,omitempty"`
+	Type       string              `json:"type"`
+	Properties map[string]property `json:"properties,omitempty"`
+	Required   []string            `json:"required,omitempty"`
 }
 
 type property struct {
@@ -194,7 +200,7 @@ type sshSessionCreateInput struct {
 type sshSessionExecInput struct {
 	SessionID string `json:"session_id"`
 	Command   string `json:"command"`
-	Timeout   int     `json:"timeout,omitempty"`
+	Timeout   int    `json:"timeout,omitempty"`
 }
 
 type sshSessionCloseInput struct {
@@ -202,11 +208,15 @@ type sshSessionCloseInput struct {
 }
 
 // Run starts the MCP server reading from stdin and writing to stdout.
+//
+// A stdio MCP server has a single connected client (the process on the other
+// end of the pipe), so every request shares the configured API key identity.
 func (s *Server) Run() error {
 	scanner := bufio.NewScanner(os.Stdin)
 	// Allow large messages
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 
+	send := s.stdioSend
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {
@@ -215,14 +225,19 @@ func (s *Server) Run() error {
 
 		var req jsonRPCRequest
 		if err := json.Unmarshal(line, &req); err != nil {
-			s.sendError(nil, -32700, "Parse error")
+			sendError(send, nil, -32700, "Parse error")
 			continue
 		}
 
-		s.handleRequest(&req)
+		s.handleRequest(&req, s.apiKeyID, send)
 	}
 
 	return scanner.Err()
+}
+
+// stdioSend delivers a JSON-RPC response to the single stdio client.
+func (s *Server) stdioSend(resp jsonRPCResponse) {
+	s.writeResponse(resp)
 }
 
 // Close cleans up server resources.
@@ -234,25 +249,27 @@ func (s *Server) Close() {
 	}
 }
 
-func (s *Server) handleRequest(req *jsonRPCRequest) {
+// handleRequest dispatches a single JSON-RPC request. client identifies the
+// caller (rate limiting + audit) and send delivers responses back to it.
+func (s *Server) handleRequest(req *jsonRPCRequest, client string, send sendFunc) {
 	switch req.Method {
 	case "initialize":
-		s.handleInitialize(req)
+		s.handleInitialize(req, send)
 	case "notifications/initialized":
 		// No response needed for notifications
 	case "tools/list":
-		s.handleToolsList(req)
+		s.handleToolsList(req, send)
 	case "tools/call":
-		s.handleToolsCall(req)
+		s.handleToolsCall(req, client, send)
 	case "ping":
-		s.sendResult(req.ID, map[string]interface{}{})
+		sendResult(send, req.ID, map[string]interface{}{})
 	default:
-		s.sendError(req.ID, -32601, fmt.Sprintf("Method not found: %s", req.Method))
+		sendError(send, req.ID, -32601, fmt.Sprintf("Method not found: %s", req.Method))
 	}
 }
 
-func (s *Server) handleInitialize(req *jsonRPCRequest) {
-	s.sendResult(req.ID, initializeResult{
+func (s *Server) handleInitialize(req *jsonRPCRequest, send sendFunc) {
+	sendResult(send, req.ID, initializeResult{
 		ProtocolVersion: "2024-11-05",
 		Capabilities: capabilities{
 			Tools: &toolsCapability{ListChanged: false},
@@ -264,7 +281,7 @@ func (s *Server) handleInitialize(req *jsonRPCRequest) {
 	})
 }
 
-func (s *Server) handleToolsList(req *jsonRPCRequest) {
+func (s *Server) handleToolsList(req *jsonRPCRequest, send sendFunc) {
 	tools := []tool{
 		{
 			Name:        "ssh_exec",
@@ -315,24 +332,19 @@ func (s *Server) handleToolsList(req *jsonRPCRequest) {
 			},
 		},
 	}
-	s.sendResult(req.ID, toolsListResult{Tools: tools})
+	sendResult(send, req.ID, toolsListResult{Tools: tools})
 }
 
-// stdioClient is the rate-limit client identifier for the stdio transport.
-// A stdio MCP server has a single connected client (the process on the other
-// end of the pipe), so all tool calls share this identifier.
-const stdioClient = "stdio"
-
-func (s *Server) handleToolsCall(req *jsonRPCRequest) {
+func (s *Server) handleToolsCall(req *jsonRPCRequest, client string, send sendFunc) {
 	var params toolCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		s.sendError(req.ID, -32602, "Invalid params")
+		sendError(send, req.ID, -32602, "Invalid params")
 		return
 	}
 
 	// Enforce per-client rate limit on every tool call.
-	if s.limiter != nil && !s.limiter.Allow(stdioClient) {
-		s.sendError(req.ID, errCodeRateLimited,
+	if s.limiter != nil && !s.limiter.Allow(client) {
+		sendError(send, req.ID, errCodeRateLimited,
 			fmt.Sprintf("rate limit exceeded: max %d tool calls per %s",
 				s.limiter.limit, s.limiter.window))
 		return
@@ -340,15 +352,15 @@ func (s *Server) handleToolsCall(req *jsonRPCRequest) {
 
 	switch params.Name {
 	case "ssh_exec":
-		s.toolSSHExec(req, params.Arguments)
+		s.toolSSHExec(req.ID, params.Arguments, client, send)
 	case "ssh_session_create":
-		s.toolSessionCreate(req, params.Arguments)
+		s.toolSessionCreate(req.ID, params.Arguments, client, send)
 	case "ssh_session_exec":
-		s.toolSessionExec(req, params.Arguments)
+		s.toolSessionExec(req.ID, params.Arguments, client, send)
 	case "ssh_session_close":
-		s.toolSessionClose(req, params.Arguments)
+		s.toolSessionClose(req.ID, params.Arguments, client, send)
 	default:
-		s.sendError(req.ID, -32602, fmt.Sprintf("Unknown tool: %s", params.Name))
+		sendError(send, req.ID, -32602, fmt.Sprintf("Unknown tool: %s", params.Name))
 	}
 }
 
@@ -359,188 +371,188 @@ const errCodeRateLimited = -32000
 
 // checkSessionCap reports whether a new SSH session may be created. When the
 // concurrent-session cap is reached it sends a tool error and returns false.
-func (s *Server) checkSessionCap(req *jsonRPCRequest) bool {
+func (s *Server) checkSessionCap(id interface{}, send sendFunc) bool {
 	if s.limiter == nil {
 		return true
 	}
 	current := len(s.sessionMgr.ListSessions())
 	if !s.limiter.AllowSession(current) {
-		s.sendToolError(req.ID,
+		sendToolError(send, id,
 			fmt.Sprintf("concurrent session limit exceeded: max %d sessions", s.limiter.MaxSessions()))
 		return false
 	}
 	return true
 }
 
-func (s *Server) toolSSHExec(req *jsonRPCRequest, rawArgs json.RawMessage) {
+func (s *Server) toolSSHExec(id interface{}, rawArgs json.RawMessage, client string, send sendFunc) {
 	var input sshExecInput
 	if err := json.Unmarshal(rawArgs, &input); err != nil {
-		s.sendToolError(req.ID, "invalid arguments: "+err.Error())
+		sendToolError(send, id, "invalid arguments: "+err.Error())
 		return
 	}
 
 	if input.Host == "" || input.Command == "" {
-		s.sendToolError(req.ID, "host and command are required")
+		sendToolError(send, id, "host and command are required")
 		return
 	}
 
 	// Validate host against whitelist
 	if !s.isHostAllowed(input.Host) {
-		s.sendToolError(req.ID, "host not in allowed hosts whitelist")
+		sendToolError(send, id, "host not in allowed hosts whitelist")
 		return
 	}
 
 	// Enforce concurrent-session cap before opening a new connection.
-	if !s.checkSessionCap(req) {
+	if !s.checkSessionCap(id, send) {
 		return
 	}
 
 	// Resolve SSH config
 	sshCfg, err := api.ResolveSSHConfig(input.Host)
 	if err != nil {
-		s.sendToolError(req.ID, "failed to resolve SSH config: "+err.Error())
+		sendToolError(send, id, "failed to resolve SSH config: "+err.Error())
 		return
 	}
 
 	// Create session
 	sess, err := s.sessionMgr.CreateSession(input.Host, sshCfg)
 	if err != nil {
-		s.sendToolError(req.ID, "SSH connection failed: "+err.Error())
+		sendToolError(send, id, "SSH connection failed: "+err.Error())
 		return
 	}
 	defer s.sessionMgr.RemoveSession(sess.ID)
 
 	// Audit
-	_ = s.auditLogger.LogAPIEvent(audit.EventAPISessionCreate, sess.ID, input.Host, s.apiKeyID, "")
+	_ = s.auditLogger.LogAPIEvent(audit.EventAPISessionCreate, sess.ID, input.Host, client, "")
 
 	// Execute
 	timeout := resolveTimeout(input.Timeout)
 	stdout, stderr, exitCode, err := sess.Exec(input.Command, timeout)
 	if err != nil {
-		s.sendToolError(req.ID, "exec failed: "+err.Error())
+		sendToolError(send, id, "exec failed: "+err.Error())
 		return
 	}
 
-	_ = s.auditLogger.LogAPIEvent(audit.EventAPIExec, sess.ID, input.Host, s.apiKeyID, input.Command)
+	_ = s.auditLogger.LogAPIEvent(audit.EventAPIExec, sess.ID, input.Host, client, input.Command)
 
 	result := map[string]interface{}{
 		"exit_code": exitCode,
 		"stdout":    stdout,
 		"stderr":    stderr,
 	}
-	s.sendToolResult(req.ID, result)
+	sendToolResult(send, id, result)
 }
 
-func (s *Server) toolSessionCreate(req *jsonRPCRequest, rawArgs json.RawMessage) {
+func (s *Server) toolSessionCreate(id interface{}, rawArgs json.RawMessage, client string, send sendFunc) {
 	var input sshSessionCreateInput
 	if err := json.Unmarshal(rawArgs, &input); err != nil {
-		s.sendToolError(req.ID, "invalid arguments: "+err.Error())
+		sendToolError(send, id, "invalid arguments: "+err.Error())
 		return
 	}
 
 	if input.Host == "" {
-		s.sendToolError(req.ID, "host is required")
+		sendToolError(send, id, "host is required")
 		return
 	}
 
 	// Validate host against whitelist
 	if !s.isHostAllowed(input.Host) {
-		s.sendToolError(req.ID, "host not in allowed hosts whitelist")
+		sendToolError(send, id, "host not in allowed hosts whitelist")
 		return
 	}
 
 	// Enforce concurrent-session cap before opening a new connection.
-	if !s.checkSessionCap(req) {
+	if !s.checkSessionCap(id, send) {
 		return
 	}
 
 	sshCfg, err := api.ResolveSSHConfig(input.Host)
 	if err != nil {
-		s.sendToolError(req.ID, "failed to resolve SSH config: "+err.Error())
+		sendToolError(send, id, "failed to resolve SSH config: "+err.Error())
 		return
 	}
 
 	sess, err := s.sessionMgr.CreateSession(input.Host, sshCfg)
 	if err != nil {
-		s.sendToolError(req.ID, "SSH connection failed: "+err.Error())
+		sendToolError(send, id, "SSH connection failed: "+err.Error())
 		return
 	}
 
-	_ = s.auditLogger.LogAPIEvent(audit.EventAPISessionCreate, sess.ID, input.Host, s.apiKeyID, "")
+	_ = s.auditLogger.LogAPIEvent(audit.EventAPISessionCreate, sess.ID, input.Host, client, "")
 
 	result := map[string]interface{}{
 		"session_id": sess.ID,
 	}
-	s.sendToolResult(req.ID, result)
+	sendToolResult(send, id, result)
 }
 
-func (s *Server) toolSessionExec(req *jsonRPCRequest, rawArgs json.RawMessage) {
+func (s *Server) toolSessionExec(id interface{}, rawArgs json.RawMessage, client string, send sendFunc) {
 	var input sshSessionExecInput
 	if err := json.Unmarshal(rawArgs, &input); err != nil {
-		s.sendToolError(req.ID, "invalid arguments: "+err.Error())
+		sendToolError(send, id, "invalid arguments: "+err.Error())
 		return
 	}
 
 	if input.SessionID == "" || input.Command == "" {
-		s.sendToolError(req.ID, "session_id and command are required")
+		sendToolError(send, id, "session_id and command are required")
 		return
 	}
 
 	sess, ok := s.sessionMgr.GetSession(input.SessionID)
 	if !ok {
-		s.sendToolError(req.ID, "session not found")
+		sendToolError(send, id, "session not found")
 		return
 	}
 
 	if sess.State != api.StateConnected {
-		s.sendToolError(req.ID, "session is not connected")
+		sendToolError(send, id, "session is not connected")
 		return
 	}
 
 	timeout := resolveTimeout(input.Timeout)
 	stdout, stderr, exitCode, err := sess.Exec(input.Command, timeout)
 	if err != nil {
-		s.sendToolError(req.ID, "exec failed: "+err.Error())
+		sendToolError(send, id, "exec failed: "+err.Error())
 		return
 	}
 
-	_ = s.auditLogger.LogAPIEvent(audit.EventAPIExec, sess.ID, sess.Host, s.apiKeyID, input.Command)
+	_ = s.auditLogger.LogAPIEvent(audit.EventAPIExec, sess.ID, sess.Host, client, input.Command)
 
 	result := map[string]interface{}{
 		"exit_code": exitCode,
 		"stdout":    stdout,
 		"stderr":    stderr,
 	}
-	s.sendToolResult(req.ID, result)
+	sendToolResult(send, id, result)
 }
 
-func (s *Server) toolSessionClose(req *jsonRPCRequest, rawArgs json.RawMessage) {
+func (s *Server) toolSessionClose(id interface{}, rawArgs json.RawMessage, client string, send sendFunc) {
 	var input sshSessionCloseInput
 	if err := json.Unmarshal(rawArgs, &input); err != nil {
-		s.sendToolError(req.ID, "invalid arguments: "+err.Error())
+		sendToolError(send, id, "invalid arguments: "+err.Error())
 		return
 	}
 
 	if input.SessionID == "" {
-		s.sendToolError(req.ID, "session_id is required")
+		sendToolError(send, id, "session_id is required")
 		return
 	}
 
 	sess, ok := s.sessionMgr.GetSession(input.SessionID)
 	if !ok {
-		s.sendToolError(req.ID, "session not found")
+		sendToolError(send, id, "session not found")
 		return
 	}
 
 	host := sess.Host
 	s.sessionMgr.RemoveSession(input.SessionID)
 
-	_ = s.auditLogger.LogAPIEvent(audit.EventAPISessionClose, input.SessionID, host, s.apiKeyID, "")
+	_ = s.auditLogger.LogAPIEvent(audit.EventAPISessionClose, input.SessionID, host, client, "")
 
 	result := map[string]interface{}{
 		"success": true,
 	}
-	s.sendToolResult(req.ID, result)
+	sendToolResult(send, id, result)
 }
 
 // --- Helpers ---
@@ -555,33 +567,31 @@ func resolveTimeout(seconds int) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-func (s *Server) sendResult(id interface{}, result interface{}) {
-	resp := jsonRPCResponse{
+func sendResult(send sendFunc, id interface{}, result interface{}) {
+	send(jsonRPCResponse{
 		JSONRPC: "2.0",
 		ID:      id,
 		Result:  result,
-	}
-	s.writeResponse(resp)
+	})
 }
 
-func (s *Server) sendError(id interface{}, code int, message string) {
-	resp := jsonRPCResponse{
+func sendError(send sendFunc, id interface{}, code int, message string) {
+	send(jsonRPCResponse{
 		JSONRPC: "2.0",
 		ID:      id,
 		Error:   &rpcError{Code: code, Message: message},
-	}
-	s.writeResponse(resp)
+	})
 }
 
-func (s *Server) sendToolResult(id interface{}, result interface{}) {
+func sendToolResult(send sendFunc, id interface{}, result interface{}) {
 	data, _ := json.Marshal(result)
-	s.sendResult(id, toolCallResult{
+	sendResult(send, id, toolCallResult{
 		Content: []contentBlock{{Type: "text", Text: string(data)}},
 	})
 }
 
-func (s *Server) sendToolError(id interface{}, message string) {
-	s.sendResult(id, toolCallResult{
+func sendToolError(send sendFunc, id interface{}, message string) {
+	sendResult(send, id, toolCallResult{
 		Content: []contentBlock{{Type: "text", Text: message}},
 		IsError: true,
 	})
@@ -600,12 +610,4 @@ func (s *Server) writeResponse(resp jsonRPCResponse) {
 	_, _ = s.writer.Write(data)
 	_ = s.writer.WriteByte('\n')
 	_ = s.writer.Flush()
-}
-
-// RunSSE starts the MCP server in SSE mode (HTTP-based).
-// This is a placeholder for SSE transport support.
-func (s *Server) RunSSE(addr string) error {
-	// SSE transport would use net/http to serve Server-Sent Events
-	// For now, only stdio is fully implemented
-	return fmt.Errorf("SSE transport not yet implemented, use stdio mode")
 }

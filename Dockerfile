@@ -10,14 +10,16 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /psh ./cmd/psh
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /psh ./cmd/psh && \
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o /psh-mcp ./cmd/psh-mcp
 
 FROM scratch
 
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /psh /psh
+COPY --from=builder /psh-mcp /psh-mcp
 
-EXPOSE 8443
+EXPOSE 8443 18080
 
 ENV PSH_HOST=0.0.0.0 \
     PSH_PORT=8443 \

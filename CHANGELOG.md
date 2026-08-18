@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- psh-mcp remote transport mode (`--transport sse`): resident HTTP/SSE MCP
+  server (MCP spec 2024-11-05) with bearer-token auth (fail-closed), TLS /
+  auto self-signed certs, health check endpoint and graceful shutdown
 - Multi-architecture Docker support (amd64, arm64)
 - Automated CI/CD pipeline with Gitea Actions
 - Binary releases for Linux and macOS (amd64, arm64)

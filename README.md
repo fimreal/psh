@@ -258,6 +258,7 @@ cd psh
 
 # 构建
 go build -o psh ./cmd/psh
+go build -o psh-mcp ./cmd/psh-mcp
 
 # 运行
 PSH_PASSWORD=your-password ./psh
@@ -343,6 +344,25 @@ Token 会通过 `Set-Cookie` 返回（HttpOnly Cookie）。
   "message": "Connection refused"
 }
 ```
+
+### MCP（AI Agent 集成）
+
+`psh-mcp` 是一个 MCP server，向 AI Agent 暴露 `ssh_exec` / `ssh_session_create` /
+`ssh_session_exec` / `ssh_session_close` 四个工具，支持两种传输模式：
+
+- **stdio**（默认）：客户端本地拉起子进程；
+- **sse**（远程）：常驻 HTTP/SSE 服务，客户端远程连接，Bearer token 认证 + 可选 TLS。
+
+```bash
+# 本地 stdio 模式（客户端配置 command 即可）
+psh-mcp
+
+# 远程 SSE 模式
+PSH_MCP_API_KEYS=<token> PSH_API_ALLOWED_HOSTS=web-server \
+  psh-mcp --transport sse --listen :18080 --auto-certs
+```
+
+详见 [docs/MCP_REMOTE_MODE.md](docs/MCP_REMOTE_MODE.md)。
 
 ---
 

@@ -73,3 +73,67 @@
 
 - 若实现远程模式，建议在新分支或本分支继续开发，别把实验性改动直接合入 `main`（当前 `feature/ssh-api` 本身也尚未合入 main）。
 - 需要与服务端常驻部署结合时，可在 Dockerfile 中同时启动 psh（WebSSH）与 psh-mcp（远程模式），或提供单独 entrypoint。
+
+---
+
+# 实现说明（2026-08-18，feature/ssh-api）
+
+远程传输模式已实现，覆盖上文全部需求与加分项：
+
+## 能力
+
+- `--transport sse`（或 `PSH_MCP_TRANSPORT=sse`）：启动常驻 HTTP/SSE 监听（MCP 规范 2024-11-05 的 "HTTP with SSE" 传输），客户端用 `transport: sse` + `url: http://<host>:<port>/sse` 连接。
+- `--listen`（或 `PSH_MCP_LISTEN`）：监听地址，默认 `:18080`。
+- **stdio 模式保持默认**，现有用法不受影响。
+- 端点：
+  - `GET /sse`：建立 SSE 流，首个 `endpoint` 事件携带本连接的 `/messages?sessionId=...` 地址；
+  - `POST /messages?sessionId=<id>`：投递 JSON-RPC 消息，响应经 SSE 流回传（202 Accepted）；
+  - `GET /healthz`：存活探针（docker/systemd 守护用）。
+- **请求认证**：`PSH_MCP_API_KEYS` 配置 Bearer token（逗号分隔，或指向密钥文件的路径，一行一个、支持 `#` 注释，与 Web 端 `PSH_API_KEYS` 语义一致）。远程模式 **fail-closed**：未配置任何密钥时拒绝启动；连接与其创建者的 token 绑定，其他 token 无法驱动该连接。token 同时作为限流与审计身份。
+- **TLS**：`--tls-cert` / `--tls-key`（或 `PSH_TLS_CERT` / `PSH_TLS_KEY`）启用证书；`--auto-certs`（`PSH_AUTO_CERTS=true`）自动生成自签证书；均未配置时明文 HTTP 并打印告警。
+- **兼容既有机制**：`PSH_API_ALLOWED_HOSTS` 白名单、`PSH_AUDIT_LOG` / `PSH_AUDIT_LEVEL` 审计、`PSH_MCP_RATE_LIMIT` / `PSH_MCP_RATE_WINDOW`（远程模式下按 token 维度限流）、`PSH_MCP_MAX_SESSIONS` 并发会话上限均继续生效。
+- SIGINT/SIGTERM 优雅退出；SSE 流每 15s 发送 keepalive 注释行，防止代理掐断长连接。
+
+## 用法示例
+
+服务端（跳板机常驻）：
+
+```bash
+PSH_API_ALLOWED_HOSTS=web-server,db-server \
+PSH_MCP_API_KEYS=<your-secret-token> \
+PSH_AUDIT_LOG=/var/log/psh/audit.jsonl \
+psh-mcp --transport sse --listen :18080 --auto-certs
+```
+
+客户端（QwenPaw / Claude Desktop 等）：
+
+```json
+{
+  "transport": "sse",
+  "url": "https://192.168.10.202:18080/sse",
+  "headers": { "Authorization": "Bearer <your-secret-token>" }
+}
+```
+
+> 注：若客户端不支持自定义请求头，可在前置代理层注入 Authorization，或反馈后评估 query token 方案。
+
+Docker 镜像已同时包含 `psh` 与 `psh-mcp` 两个二进制（EXPOSE 8443/18080），可分别以两个容器守护运行，例如：
+
+```bash
+docker run -d --name psh-mcp \
+  -v ~/.ssh:/root/.ssh:ro \
+  -p 18080:18080 \
+  -e PSH_MCP_API_KEYS=<your-secret-token> \
+  -e PSH_API_ALLOWED_HOSTS=web-server \
+  epurs/psh:latest \
+  /psh-mcp --transport sse --listen :18080
+```
+
+## 相关代码
+
+| 文件 | 说明 |
+|------|------|
+| `internal/mcp/server.go` | 传输无关的 JSON-RPC 分发（stdio/SSE 共用），client 身份贯穿限流与审计 |
+| `internal/mcp/sse.go` | SSE 传输实现（认证、连接注册、keepalive、优雅退出） |
+| `internal/mcp/sse_test.go` | SSE 传输单元测试 |
+| `cmd/psh-mcp/main.go` | `--transport` / `--listen` / TLS 参数与密钥加载 |
