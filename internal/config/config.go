@@ -41,13 +41,18 @@ type Config struct {
 	// CORS settings
 	AllowedOrigins []string // Allowed CORS origins
 
+	// TrustedProxies lists proxy IPs/CIDRs whose X-Forwarded-For headers are
+	// trusted for ClientIP(). Empty (default) means NO proxy headers are
+	// trusted: ClientIP() is the direct TCP peer, which cannot be spoofed.
+	TrustedProxies []string
+
 	// API settings
-	APIEnabled       bool          // Enable REST API (default: false)
-	APIKeys          []string      // Comma-separated API keys (or path to file)
-	APIAllowedHosts  []string      // Comma-separated allowed SSH hosts for API
+	APIEnabled        bool          // Enable REST API (default: false)
+	APIKeys           []string      // Comma-separated API keys (or path to file)
+	APIAllowedHosts   []string      // Comma-separated allowed SSH hosts for API
 	APISessionTimeout time.Duration // Idle timeout for API sessions (default: 10m)
 	APISessionMaxLife time.Duration // Max session lifetime (default: 1h)
-	APIExecTimeout   time.Duration // Max command execution timeout (default: 300s)
+	APIExecTimeout    time.Duration // Max command execution timeout (default: 300s)
 }
 
 // RunFunc is the function to run after config is loaded
@@ -87,6 +92,9 @@ func Load(run RunFunc) error {
 			}
 			if viper.IsSet("JWT_EXPIRE") {
 				cfg.JWTExpire = viper.GetInt("JWT_EXPIRE")
+			}
+			if viper.IsSet("TRUSTED_PROXIES") {
+				cfg.TrustedProxies = getStringSliceEnv("TRUSTED_PROXIES")
 			}
 			if viper.IsSet("PASSWORD") {
 				cfg.Passwords = getStringSliceEnv("PASSWORD")
@@ -218,6 +226,7 @@ func Load(run RunFunc) error {
 
 	// CORS flags
 	flags.StringSliceVar(&cfg.AllowedOrigins, "allowed-origins", []string{}, "Allowed CORS origins (e.g., https://example.com)")
+	flags.StringSliceVar(&cfg.TrustedProxies, "trusted-proxies", []string{}, "Trusted proxy IPs/CIDRs whose X-Forwarded-For is honored (default: none)")
 
 	// API flags
 	flags.BoolVar(&cfg.APIEnabled, "api-enabled", false, "Enable REST API for AI agents (default: false)")

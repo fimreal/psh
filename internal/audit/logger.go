@@ -29,10 +29,10 @@ const (
 type Level string
 
 const (
-	LevelOff          Level = "off"
-	LevelConnection   Level = "connection"
-	LevelCommand      Level = "command"
-	LevelCommandFull  Level = "command-full"
+	LevelOff         Level = "off"
+	LevelConnection  Level = "connection"
+	LevelCommand     Level = "command"
+	LevelCommandFull Level = "command-full"
 )
 
 type Event struct {
@@ -177,6 +177,10 @@ func (l *Logger) asyncWriter() {
 			}
 		case <-timer.C:
 			flush()
+			// Re-arm the timer: without this, the first flush stops periodic
+			// flushing and low-traffic events would sit in the batch until it
+			// fills or the process exits.
+			timer.Reset(l.batchWindow)
 		}
 	}
 }

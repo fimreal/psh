@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/subtle"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -13,17 +15,19 @@ import (
 )
 
 const (
-	maxCommandLength = 64 * 1024 // 64KB
-	maxExecTimeout   = 300       // seconds
-	defaultExecTimeout = 30      // seconds
+	maxCommandLength   = 64 * 1024 // 64KB
+	defaultExecTimeout = 30        // seconds
+	// fallbackMaxExecTimeout is used only when the handler has no configured
+	// maximum (0), so a missing config cannot disable the cap entirely.
+	fallbackMaxExecTimeout = 300 // seconds
 )
 
 // Handler holds dependencies for API endpoints.
 type Handler struct {
-	sessionMgr  *SessionManager
-	auditLogger *audit.Logger
-	apiKeys     map[string]APIKeyConfig // key -> config
-	allowedHosts map[string]bool
+	sessionMgr     *SessionManager
+	auditLogger    *audit.Logger
+	apiKeys        map[string]APIKeyConfig // key -> config
+	allowedHosts   map[string]bool
 	maxExecTimeout time.Duration
 }
 
@@ -103,7 +107,7 @@ func (h *Handler) APIKeyAuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		keyCfg, ok := h.apiKeys[key]
+		keyCfg, ok := h.lookupKey(key)
 		if !ok {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, ErrorResponse{Error: "invalid API key"})
 			return
@@ -114,6 +118,17 @@ func (h *Handler) APIKeyAuthMiddleware() gin.HandlerFunc {
 		c.Set("api_key_id", keyCfg.Identifier)
 		c.Next()
 	}
+}
+
+// lookupKey finds the API key config using constant-time comparison so the
+// validity of a candidate key cannot be measured via map-lookup timing.
+func (h *Handler) lookupKey(candidate string) (APIKeyConfig, bool) {
+	for key, cfg := range h.apiKeys {
+		if subtle.ConstantTimeCompare([]byte(candidate), []byte(key)) == 1 {
+			return cfg, true
+		}
+	}
+	return APIKeyConfig{}, false
 }
 
 // sessionKeyMiddleware validates the X-Session-Key header against the session.
@@ -182,8 +197,8 @@ func (h *Handler) CreateSession(c *gin.Context) {
 		return
 	}
 
-	// Create session
-	sess, err := h.sessionMgr.CreateSession(host, sshCfg)
+	// Create session (owned by the calling API key)
+	sess, err := h.sessionMgr.CreateSession(host, sshCfg, c.GetString("api_key_id"))
 	if err != nil {
 		log.Warnw("API session creation failed", "host", host, "error", err)
 		c.JSON(http.StatusBadGateway, ErrorResponse{Error: "SSH connection failed: " + err.Error()})
@@ -198,7 +213,7 @@ func (h *Handler) CreateSession(c *gin.Context) {
 		SessionID:  sess.ID,
 		SessionKey: sess.SessionKey(),
 		Host:       sess.Host,
-		State:      string(sess.State),
+		State:      string(sess.State()),
 		CreatedAt:  sess.CreatedAt.UTC().Format(time.RFC3339),
 	})
 }
@@ -219,18 +234,24 @@ func (h *Handler) ExecCommand(c *gin.Context) {
 		return
 	}
 
-	// Determine timeout
+	// Determine timeout (cap honors --api-exec-timeout, not a constant)
 	timeout := time.Duration(defaultExecTimeout) * time.Second
+	maxExec := h.maxExecTimeout
+	if maxExec <= 0 {
+		maxExec = fallbackMaxExecTimeout * time.Second
+	}
 	if req.Timeout > 0 {
-		if req.Timeout > maxExecTimeout {
-			c.JSON(http.StatusBadRequest, ErrorResponse{Error: "timeout exceeds maximum of 300s"})
+		if time.Duration(req.Timeout)*time.Second > maxExec {
+			c.JSON(http.StatusBadRequest, ErrorResponse{
+				Error: fmt.Sprintf("timeout exceeds maximum of %ds", int(maxExec.Seconds())),
+			})
 			return
 		}
 		timeout = time.Duration(req.Timeout) * time.Second
 	}
 
 	// Check session state
-	if sess.State != StateConnected {
+	if sess.State() != StateConnected {
 		c.JSON(http.StatusConflict, ErrorResponse{Error: "session is not connected"})
 		return
 	}
@@ -267,15 +288,15 @@ func (h *Handler) ExecCommand(c *gin.Context) {
 
 // ListSessions handles GET /api/v1/sessions
 func (h *Handler) ListSessions(c *gin.Context) {
-	sessions := h.sessionMgr.ListSessions()
+	sessions := h.sessionMgr.ListSessionsByOwner(c.GetString("api_key_id"))
 	result := make([]SessionInfo, 0, len(sessions))
 	for _, sess := range sessions {
 		result = append(result, SessionInfo{
 			ID:         sess.ID,
 			Host:       sess.Host,
-			State:      string(sess.State),
+			State:      string(sess.State()),
 			CreatedAt:  sess.CreatedAt.UTC().Format(time.RFC3339),
-			LastActive: sess.LastActive.UTC().Format(time.RFC3339),
+			LastActive: sess.LastActive().UTC().Format(time.RFC3339),
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"sessions": result, "count": len(result)})
@@ -287,9 +308,9 @@ func (h *Handler) GetSession(c *gin.Context) {
 	c.JSON(http.StatusOK, SessionInfo{
 		ID:         sess.ID,
 		Host:       sess.Host,
-		State:      string(sess.State),
+		State:      string(sess.State()),
 		CreatedAt:  sess.CreatedAt.UTC().Format(time.RFC3339),
-		LastActive: sess.LastActive.UTC().Format(time.RFC3339),
+		LastActive: sess.LastActive().UTC().Format(time.RFC3339),
 	})
 }
 

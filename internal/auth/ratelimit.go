@@ -11,12 +11,13 @@ import (
 
 // LoginAttempt tracks failed login attempts per IP
 type LoginAttempt struct {
-	Count           int
-	FirstSeen       time.Time
-	LockedUntil     time.Time
-	CaptchaKey      string    // Key for the current captcha challenge
-	CaptchaLevel    int       // Number of captcha failures
-	CaptchaExpires  time.Time // Rate limit for captcha generation
+	Count          int
+	FirstSeen      time.Time
+	LastAttempt    time.Time // last failure/captcha activity (retention base)
+	LockedUntil    time.Time
+	CaptchaKey     string    // Key for the current captcha challenge
+	CaptchaLevel   int       // Number of captcha failures
+	CaptchaExpires time.Time // Rate limit for captcha generation
 }
 
 // CaptchaChallenge represents a captcha challenge
@@ -37,6 +38,12 @@ type LoginLimiter struct {
 	captchaExpiry    time.Duration // Captcha expiration time
 	stopCleanup      chan struct{} // Signal to stop cleanup goroutine
 }
+
+// entryRetention is how long an inactive attempt entry is kept before the
+// cleanup removes it. Entries for IPs that never triggered a lockout MUST be
+// removed too, otherwise an attacker rotating spoofed source IPs grows the
+// map without bound (remote unauthenticated memory-exhaustion DoS).
+const entryRetention = 30 * time.Minute
 
 // NewLoginLimiter creates a new login limiter
 func NewLoginLimiter(maxAttempts int, lockoutMinutes int) *LoginLimiter {
@@ -109,8 +116,9 @@ func (l *LoginLimiter) RecordFailure(ip string) bool {
 	attempt, exists := l.attempts[ip]
 	if !exists {
 		l.attempts[ip] = &LoginAttempt{
-			Count:     1,
-			FirstSeen: now,
+			Count:       1,
+			FirstSeen:   now,
+			LastAttempt: now,
 		}
 		return false
 	}
@@ -123,6 +131,7 @@ func (l *LoginLimiter) RecordFailure(ip string) bool {
 	}
 
 	attempt.Count++
+	attempt.LastAttempt = now
 	attempt.CaptchaKey = "" // Invalidate existing captcha
 
 	// Check if we should lock out
@@ -181,8 +190,9 @@ func (l *LoginLimiter) GenerateCaptcha(ip string) (key string, question string) 
 	attempt, exists := l.attempts[ip]
 	if !exists {
 		attempt = &LoginAttempt{
-			Count:     l.captchaThreshold, // Ensure we stay in captcha mode
-			FirstSeen: time.Now(),
+			Count:       l.captchaThreshold, // Ensure we stay in captcha mode
+			FirstSeen:   time.Now(),
+			LastAttempt: time.Now(),
 		}
 		l.attempts[ip] = attempt
 	}
@@ -198,9 +208,9 @@ func (l *LoginLimiter) GenerateCaptcha(ip string) (key string, question string) 
 	// Generate random numbers using crypto/rand (larger range for harder brute-force)
 	a, _ := rand.Int(rand.Reader, big.NewInt(50))
 	b, _ := rand.Int(rand.Reader, big.NewInt(50))
-	aVal := int(a.Int64()) + 10  // 10-59
-	bVal := int(b.Int64()) + 10  // 10-59
-	answer := aVal + bVal        // 20-118
+	aVal := int(a.Int64()) + 10 // 10-59
+	bVal := int(b.Int64()) + 10 // 10-59
+	answer := aVal + bVal       // 20-118
 
 	// Generate random key
 	keyBytes := make([]byte, 16)
@@ -287,8 +297,11 @@ func (l *LoginLimiter) Cleanup() {
 
 	now := time.Now()
 	for ip, attempt := range l.attempts {
-		// Remove if lockout expired and no recent attempts
-		if !attempt.LockedUntil.IsZero() && now.After(attempt.LockedUntil) {
+		locked := !attempt.LockedUntil.IsZero() && now.Before(attempt.LockedUntil)
+		// Delete every entry that is neither locked out nor recently active.
+		// This includes entries that never reached a lockout: keeping them
+		// forever lets spoofed-IP floods grow the map unboundedly.
+		if !locked && now.Sub(attempt.LastAttempt) > entryRetention {
 			delete(l.attempts, ip)
 		}
 	}

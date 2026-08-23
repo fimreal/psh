@@ -18,6 +18,8 @@ import (
 	log "github.com/fimreal/goutils/ezap"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+
+	"github.com/fimreal/psh/internal/netguard"
 )
 
 // SessionState represents the lifecycle state of an API session.
@@ -31,14 +33,23 @@ const (
 
 // APISession represents a single SSH session created via the API.
 type APISession struct {
-	ID        string       `json:"id"`
-	Host      string       `json:"host"`
-	State     SessionState `json:"state"`
-	CreatedAt time.Time    `json:"created_at"`
-	LastActive time.Time   `json:"last_active"`
+	ID        string    `json:"id"`
+	Host      string    `json:"host"`
+	CreatedAt time.Time `json:"created_at"`
+
+	// stateMu guards state/lastActive: they are written by request
+	// goroutines (Touch/connect/Close) and read by the manager's cleanup
+	// goroutine, so unsynchronized access would be a data race.
+	stateMu    sync.RWMutex
+	state      SessionState
+	lastActive time.Time
 
 	// sessionKey is the per-session secret (not serialized).
 	sessionKey string
+
+	// ownerID identifies the API key / MCP client that created the session.
+	// Sessions are only usable by their owner (not serialized).
+	ownerID string
 
 	// SSH connection
 	sshClient *ssh.Client
@@ -54,8 +65,8 @@ type APISession struct {
 	closed    chan struct{}
 
 	// Config reference for timeouts
-	idleTimeout  time.Duration
-	maxLifetime  time.Duration
+	idleTimeout time.Duration
+	maxLifetime time.Duration
 }
 
 // SessionManager manages in-memory API sessions with TTL.
@@ -90,8 +101,9 @@ func (sm *SessionManager) Close() {
 	}
 }
 
-// CreateSession creates a new API session and connects to the given host.
-func (sm *SessionManager) CreateSession(host string, sshConfig *SSHHostConfig) (*APISession, error) {
+// CreateSession creates a new API session owned by ownerID (the API key or
+// MCP client identifier) and connects to the given host.
+func (sm *SessionManager) CreateSession(host string, sshConfig *SSHHostConfig, ownerID string) (*APISession, error) {
 	sessionID, err := generateRandomHex(32)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate session ID: %w", err)
@@ -104,16 +116,17 @@ func (sm *SessionManager) CreateSession(host string, sshConfig *SSHHostConfig) (
 	sess := &APISession{
 		ID:          sessionID,
 		Host:        host,
-		State:       StateConnecting,
 		CreatedAt:   time.Now(),
-		LastActive:  time.Now(),
 		sessionKey:  sessionKey,
+		ownerID:     ownerID,
 		outputBuf:   bytes.NewBuffer(nil),
 		observers:   make(map[chan []byte]struct{}),
 		closed:      make(chan struct{}),
 		idleTimeout: sm.idleTimeout,
 		maxLifetime: sm.maxLifetime,
 	}
+	sess.setState(StateConnecting)
+	sess.Touch()
 
 	// Connect to SSH host
 	if err := sess.connect(sshConfig); err != nil {
@@ -135,13 +148,39 @@ func (sm *SessionManager) GetSession(id string) (*APISession, bool) {
 	return sess, ok
 }
 
-// ListSessions returns all active sessions.
+// GetSessionOwned returns the session only if it was created by ownerID.
+// Cross-tenant access must not reveal (or allow driving) other owners'
+// sessions even when their IDs leak.
+func (sm *SessionManager) GetSessionOwned(id, ownerID string) (*APISession, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	sess, ok := sm.sessions[id]
+	if !ok || sess.ownerID != ownerID {
+		return nil, false
+	}
+	return sess, true
+}
+
+// ListSessions returns all active sessions (global count, for caps/monitoring).
 func (sm *SessionManager) ListSessions() []*APISession {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	result := make([]*APISession, 0, len(sm.sessions))
 	for _, sess := range sm.sessions {
 		result = append(result, sess)
+	}
+	return result
+}
+
+// ListSessionsByOwner returns all active sessions created by ownerID.
+func (sm *SessionManager) ListSessionsByOwner(ownerID string) []*APISession {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	result := make([]*APISession, 0, len(sm.sessions))
+	for _, sess := range sm.sessions {
+		if sess.ownerID == ownerID {
+			result = append(result, sess)
+		}
 	}
 	return result
 }
@@ -171,12 +210,35 @@ func (s *APISession) SessionKey() string {
 
 // Touch updates the last active timestamp.
 func (s *APISession) Touch() {
-	s.LastActive = time.Now()
+	s.stateMu.Lock()
+	s.lastActive = time.Now()
+	s.stateMu.Unlock()
+}
+
+// State returns the current lifecycle state.
+func (s *APISession) State() SessionState {
+	s.stateMu.RLock()
+	defer s.stateMu.RUnlock()
+	return s.state
+}
+
+// setState stores the lifecycle state.
+func (s *APISession) setState(st SessionState) {
+	s.stateMu.Lock()
+	s.state = st
+	s.stateMu.Unlock()
+}
+
+// LastActive returns the last activity timestamp.
+func (s *APISession) LastActive() time.Time {
+	s.stateMu.RLock()
+	defer s.stateMu.RUnlock()
+	return s.lastActive
 }
 
 // Exec executes a command on the SSH session and returns stdout, stderr, exit code.
 func (s *APISession) Exec(command string, timeout time.Duration) (stdout, stderr string, exitCode int, err error) {
-	if s.State != StateConnected {
+	if s.State() != StateConnected {
 		return "", "", -1, fmt.Errorf("session not connected")
 	}
 	if s.sshClient == nil {
@@ -233,7 +295,7 @@ func (s *APISession) Exec(command string, timeout time.Duration) (stdout, stderr
 // Close closes the SSH connection and notifies observers.
 func (s *APISession) Close() {
 	s.closeOnce.Do(func() {
-		s.State = StateClosed
+		s.setState(StateClosed)
 		close(s.closed)
 
 		// Notify observers
@@ -330,20 +392,33 @@ func (s *APISession) connect(cfg *SSHHostConfig) error {
 		Timeout:         15 * time.Second,
 	}
 
-	addr := fmt.Sprintf("%s:%d", cfg.Hostname, cfg.Port)
+	addr := net.JoinHostPort(cfg.Hostname, fmt.Sprintf("%d", cfg.Port))
 
-	// Check blacklist
-	if isBlacklistedAddr(addr) {
+	// Pre-dial check for fast feedback (the dial-time netguard control below
+	// is authoritative).
+	if addrBlocked(addr) {
 		return fmt.Errorf("host %s is blacklisted", cfg.Hostname)
 	}
 
-	client, err := ssh.Dial("tcp", addr, sshCfg)
+	// Dial manually so the Control hook can re-check the blacklist against
+	// the RESOLVED address right before the TCP connect: a pre-dial hostname
+	// check alone can be bypassed via DNS rebinding (public IP during
+	// lookup, loopback during connect).
+	dialer := &net.Dialer{
+		Timeout: 15 * time.Second,
+		Control: netguard.ControlFunc(nil),
+	}
+	conn, err := dialer.Dial("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("SSH dial to %s failed: %w", addr, err)
 	}
-
-	s.sshClient = client
-	s.State = StateConnected
+	client, chans, reqs, err := ssh.NewClientConn(conn, addr, sshCfg)
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("SSH handshake to %s failed: %w", addr, err)
+	}
+	s.sshClient = ssh.NewClient(client, chans, reqs)
+	s.setState(StateConnected)
 	return nil
 }
 
@@ -369,7 +444,7 @@ func (sm *SessionManager) cleanupExpired() {
 	sm.mu.RLock()
 	for id, sess := range sm.sessions {
 		// Idle timeout
-		if now.Sub(sess.LastActive) > sm.idleTimeout {
+		if now.Sub(sess.LastActive()) > sm.idleTimeout {
 			expired = append(expired, id)
 			continue
 		}
@@ -535,22 +610,28 @@ func loadSSHAgent() []ssh.Signer {
 	return signers
 }
 
-// isBlacklistedAddr checks if an address is in the default blacklist (loopback).
-func isBlacklistedAddr(addr string) bool {
+// addrBlocked checks whether the address resolves to (or is literally) an
+// always-blocked destination. The dial-time netguard control is the real
+// enforcement; this only gives faster, clearer errors.
+func addrBlocked(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return false
 	}
 	ip := net.ParseIP(host)
-	if ip == nil {
-		ips, err := net.LookupIP(host)
-		if err != nil || len(ips) == 0 {
-			return false
-		}
-		ip = ips[0]
+	if ip != nil {
+		return netguard.IsBlockedIP(ip)
 	}
-	// Block loopback by default
-	return ip.IsLoopback()
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return false
+	}
+	for _, ip := range ips {
+		if netguard.IsBlockedIP(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // generateRandomHex generates a random hex string of the given byte length.

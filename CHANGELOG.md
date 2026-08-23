@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Web API: gin trusted-proxy handling is now fail-closed — `X-Forwarded-For`
+  is ignored by default, so clients can no longer spoof their IP to bypass
+  login lockout and rate limiting; configure real reverse-proxy addresses via
+  `--trusted-proxies` / `TRUSTED_PROXIES`
+- Login lockout map: stale entries are now evicted based on last activity,
+  including entries that never triggered a lockout (previously an attacker
+  rotating spoofed source IPs could exhaust memory remotely)
+- WebSocket concurrency slots are acquired/released around the whole request
+  lifecycle in middleware; failed auth or upgrade no longer permanently leaks
+  a slot for the client IP
+- Audit log: fixed periodic flush timer not being re-armed, which delayed
+  low-traffic events indefinitely
+- API/MCP sessions: session state fields are now mutex-guarded (data race);
+  sessions are bound to their creator (API key / MCP client) and can neither
+  be driven nor listed by other identities; API key lookup is constant-time
+- `--api-exec-timeout` is now actually honored as the exec timeout cap
+  (previously shadowed by an unrelated constant)
+- Auth cookie is now `SameSite=Lax` and `Secure` outside dev mode
+- Cross-origin policy is deny-by-default: with no `--allowed-origins`
+  configured, cross-origin requests and WebSocket handshakes are rejected
+  instead of being allowed from anywhere
+- Outbound SSH targets are re-checked at dial time against loopback and
+  link-local ranges (including cloud metadata 169.254.169.254) plus the user
+  blacklist, on the RESOLVED address — closing DNS-rebinding TOCTOU bypasses;
+  IPv6 loopback/link-local are now blocked too
+
 ### Added
 - psh-mcp remote transport mode (`--transport sse`): resident HTTP/SSE MCP
   server (MCP spec 2024-11-05) with bearer-token auth (fail-closed), TLS /

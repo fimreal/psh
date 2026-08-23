@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"testing"
 	"time"
+
+	"github.com/fimreal/psh/internal/netguard"
 )
 
 func TestGenerateRandomHex(t *testing.T) {
@@ -51,9 +53,7 @@ func TestSessionManager_CleanupExpired(t *testing.T) {
 	sess := &APISession{
 		ID:          "test-expired",
 		Host:        "testhost",
-		State:       StateConnected,
 		CreatedAt:   time.Now().Add(-1 * time.Hour),
-		LastActive:  time.Now().Add(-1 * time.Hour),
 		sessionKey:  "test-key",
 		observers:   make(map[chan []byte]struct{}),
 		closed:      make(chan struct{}),
@@ -79,9 +79,7 @@ func TestSessionManager_RemoveSession(t *testing.T) {
 	sess := &APISession{
 		ID:          "test-remove",
 		Host:        "testhost",
-		State:       StateConnected,
 		CreatedAt:   time.Now(),
-		LastActive:  time.Now(),
 		sessionKey:  "test-key",
 		observers:   make(map[chan []byte]struct{}),
 		closed:      make(chan struct{}),
@@ -98,8 +96,8 @@ func TestSessionManager_RemoveSession(t *testing.T) {
 	if ok {
 		t.Error("expected session to be removed")
 	}
-	if sess.State != StateClosed {
-		t.Errorf("expected session state to be closed, got %s", sess.State)
+	if sess.State() != StateClosed {
+		t.Errorf("expected session state to be closed, got %s", sess.State())
 	}
 }
 
@@ -120,11 +118,11 @@ func TestAPISession_ValidateSessionKey(t *testing.T) {
 func TestAPISession_AttachDetach(t *testing.T) {
 	sess := &APISession{
 		ID:        "test-attach",
-		State:     StateConnected,
 		observers: make(map[chan []byte]struct{}),
 		closed:    make(chan struct{}),
 		outputBuf: bytes.NewBuffer(nil),
 	}
+	sess.setState(StateConnected)
 
 	ch, err := sess.Attach()
 	if err != nil {
@@ -156,10 +154,10 @@ func TestAPISession_AttachDetach(t *testing.T) {
 func TestAPISession_AttachClosedSession(t *testing.T) {
 	sess := &APISession{
 		ID:        "test-closed",
-		State:     StateClosed,
 		observers: make(map[chan []byte]struct{}),
 		closed:    make(chan struct{}),
 	}
+	sess.setState(StateClosed)
 	close(sess.closed)
 
 	_, err := sess.Attach()
@@ -171,10 +169,10 @@ func TestAPISession_AttachClosedSession(t *testing.T) {
 func TestAPISession_CloseNotifiesObservers(t *testing.T) {
 	sess := &APISession{
 		ID:        "test-close-notify",
-		State:     StateConnected,
 		observers: make(map[chan []byte]struct{}),
 		closed:    make(chan struct{}),
 	}
+	sess.setState(StateConnected)
 
 	ch, err := sess.Attach()
 	if err != nil {
@@ -190,10 +188,11 @@ func TestAPISession_CloseNotifiesObservers(t *testing.T) {
 }
 
 func TestAPISession_Touch(t *testing.T) {
-	sess := &APISession{LastActive: time.Now().Add(-1 * time.Hour)}
-	old := sess.LastActive
+	sess := &APISession{}
+	old := sess.LastActive()
+	time.Sleep(time.Millisecond)
 	sess.Touch()
-	if !sess.LastActive.After(old) {
+	if !sess.LastActive().After(old) {
 		t.Error("expected LastActive to be updated")
 	}
 }
@@ -211,11 +210,59 @@ func TestResolveSSHConfig_Defaults(t *testing.T) {
 	}
 }
 
-func TestIsBlacklistedAddr(t *testing.T) {
-	if !isBlacklistedAddr("127.0.0.1:22") {
-		t.Error("expected loopback to be blacklisted")
+func TestAddrBlocked(t *testing.T) {
+	for _, addr := range []string{"127.0.0.1:22", "[::1]:22", "169.254.169.254:80"} {
+		if !addrBlocked(addr) {
+			t.Errorf("expected %s to be blacklisted", addr)
+		}
 	}
-	if isBlacklistedAddr("8.8.8.8:22") {
+	if addrBlocked("8.8.8.8:22") {
 		t.Error("expected public IP to not be blacklisted")
+	}
+}
+
+func TestSessionManager_OwnershipFiltering(t *testing.T) {
+	sm := NewSessionManager(10*time.Minute, 1*time.Hour)
+	defer sm.Close()
+
+	mk := func(id, owner string) {
+		sess := &APISession{
+			ID:        id,
+			ownerID:   owner,
+			observers: make(map[chan []byte]struct{}),
+			closed:    make(chan struct{}),
+		}
+		sm.mu.Lock()
+		sm.sessions[id] = sess
+		sm.mu.Unlock()
+	}
+	mk("s-alice", "key-alice")
+	mk("s-bob", "key-bob")
+
+	if _, ok := sm.GetSessionOwned("s-alice", "key-bob"); ok {
+		t.Error("expected cross-owner access to be denied")
+	}
+	if _, ok := sm.GetSessionOwned("s-alice", "key-alice"); !ok {
+		t.Error("expected owner to access own session")
+	}
+
+	if got := len(sm.ListSessionsByOwner("key-bob")); got != 1 {
+		t.Errorf("expected 1 session for key-bob, got %d", got)
+	}
+}
+
+func TestNetguardControl(t *testing.T) {
+	ctrl := netguard.ControlFunc(nil)
+	if err := ctrl("tcp", "127.0.0.1:22", nil); err == nil {
+		t.Error("expected loopback dial control to be rejected")
+	}
+	if err := ctrl("tcp", "[::1]:22", nil); err == nil {
+		t.Error("expected IPv6 loopback dial control to be rejected")
+	}
+	if err := ctrl("tcp", "169.254.169.254:80", nil); err == nil {
+		t.Error("expected metadata endpoint dial control to be rejected")
+	}
+	if err := ctrl("tcp", "8.8.8.8:22", nil); err != nil {
+		t.Errorf("expected public address to be allowed, got %v", err)
 	}
 }

@@ -16,6 +16,8 @@ import (
 
 	log "github.com/fimreal/goutils/ezap"
 	"golang.org/x/crypto/ssh"
+
+	"github.com/fimreal/psh/internal/netguard"
 )
 
 // HostConfig represents an SSH host configuration
@@ -589,8 +591,11 @@ func (s *Session) tryConnectWithFallback(host string, port int, authMethods []ss
 	// Connect with context support
 	addr := fmt.Sprintf("%s:%d", host, port)
 
-	// Use net.DialContext for cancellable connection
-	dialer := &net.Dialer{}
+	// Use net.DialContext for cancellable connection. The Control hook
+	// re-checks the blacklist against the RESOLVED address right before the
+	// TCP connect, closing the DNS-rebinding TOCTOU window left by the
+	// pre-dial hostname check.
+	dialer := &net.Dialer{Control: netguard.ControlFunc(s.sshBlacklist)}
 	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		if ctx.Err() == context.Canceled {

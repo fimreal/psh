@@ -18,8 +18,8 @@ import (
 	"github.com/fimreal/psh/internal/audit"
 	"github.com/fimreal/psh/internal/auth"
 	"github.com/fimreal/psh/internal/config"
-	"github.com/fimreal/psh/static"
 	tlspkg "github.com/fimreal/psh/pkg/tls"
+	"github.com/fimreal/psh/static"
 	"github.com/gin-gonic/gin"
 )
 
@@ -32,8 +32,8 @@ type Server struct {
 	sessionManager *auth.SessionManager
 
 	// API (optional)
-	apiHandler     *api.Handler
-	apiSessionMgr  *api.SessionManager
+	apiHandler    *api.Handler
+	apiSessionMgr *api.SessionManager
 }
 
 func New(cfg *config.Config) (*Server, error) {
@@ -92,20 +92,33 @@ func (s *Server) Run() error {
 
 	// Create router
 	r := gin.New()
+
+	// Only trust X-Forwarded-* headers from explicitly configured proxies.
+	// gin's default trusts every peer, letting any client spoof its IP via
+	// X-Forwarded-For and bypass login lockout / rate limiting (fail-closed).
+	if len(s.cfg.TrustedProxies) == 0 {
+		if err := r.SetTrustedProxies(nil); err != nil {
+			return fmt.Errorf("failed to configure trusted proxies: %w", err)
+		}
+		log.Info("Trusted proxies: none (ClientIP = direct TCP peer)")
+	} else {
+		if err := r.SetTrustedProxies(s.cfg.TrustedProxies); err != nil {
+			return fmt.Errorf("invalid trusted proxies configuration: %w", err)
+		}
+		log.Infow("Trusted proxies configured", "proxies", s.cfg.TrustedProxies)
+	}
+
 	r.Use(gin.Recovery())
 
 	// Apply security headers
 	r.Use(SecurityMiddleware())
 
-	// Apply CORS middleware (default: allow all origins)
-	origins := s.cfg.AllowedOrigins
-	if len(origins) == 0 {
-		origins = []string{"*"}
-	}
-	r.Use(CORSMiddleware(origins))
+	// Apply CORS middleware. No wildcard default: an empty configuration
+	// means no cross-origin access is allowed (same-origin UI still works).
+	r.Use(CORSMiddleware(s.cfg.AllowedOrigins))
 
-	// Setup WebSocket origin validation
-	SetupWebSocketOrigins(origins)
+	// Setup WebSocket origin validation (same fail-closed policy)
+	SetupWebSocketOrigins(s.cfg.AllowedOrigins)
 
 	// Load HTML templates from embedded FS
 	tmpl, err := template.ParseFS(static.Files, "index.html")

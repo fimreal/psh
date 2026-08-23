@@ -21,7 +21,10 @@ import (
 // allowedOriginsForWS stores allowed origins for WebSocket validation
 var allowedOriginsForWS []string
 
-// SetupWebSocketOrigins configures allowed origins for WebSocket connections
+// SetupWebSocketOrigins configures allowed origins for WebSocket connections.
+// An empty list denies all cross-origin handshakes (same-origin requests,
+// which carry no Origin header, are always allowed): defaulting to "*" would
+// let any malicious page attempt authenticated WebSocket hijacking.
 func SetupWebSocketOrigins(origins []string) {
 	allowedOriginsForWS = origins
 }
@@ -36,7 +39,7 @@ var upgrader = websocket.Upgrader{
 			return true // Same-origin request
 		}
 
-		// Check against allowed origins
+		// Check against allowed origins (empty list = deny cross-origin)
 		return slices.Contains(allowedOriginsForWS, "*") || slices.Contains(allowedOriginsForWS, origin)
 	},
 }
@@ -142,20 +145,17 @@ func (h *Handler) TerminalWSHandler(c *gin.Context) {
 		showHostKeyDigest: h.showHostKeyDigest,
 	}
 
-	client.handleMessages(h.sshBlacklist, c.ClientIP())
+	client.handleMessages(h.sshBlacklist)
 }
 
-func (c *WSClient) handleMessages(sshBlacklist []string, clientIP string) {
+func (c *WSClient) handleMessages(sshBlacklist []string) {
 	// Register session
 	c.sessionManager.AddSession(c.tokenID)
 	log.Debugw("Session added", "token", c.tokenID, "count", c.sessionManager.GetSessionCount(c.tokenID))
 
-	// Ensure WebSocket connection slot is released on exit
-	defer func() {
-		if tracker := GetWSConnTracker(); tracker != nil && clientIP != "" {
-			tracker.Release(clientIP)
-		}
-	}()
+	// Note: the per-IP WebSocket concurrency slot is acquired/released by
+	// WSRateLimitMiddleware around the whole request lifecycle; do not
+	// release it here.
 
 	// Start shell session
 	sess := shell.NewSession(sshBlacklist, c.strictHostKey, c.showHostKeyDigest)

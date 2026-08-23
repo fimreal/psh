@@ -435,8 +435,8 @@ func (s *Server) toolSSHExec(id interface{}, rawArgs json.RawMessage, client str
 		return
 	}
 
-	// Create session
-	sess, err := s.sessionMgr.CreateSession(input.Host, sshCfg)
+	// Create session owned by this client (other keys cannot drive it)
+	sess, err := s.sessionMgr.CreateSession(input.Host, sshCfg, client)
 	if err != nil {
 		sendToolError(send, id, "SSH connection failed: "+err.Error())
 		return
@@ -494,7 +494,7 @@ func (s *Server) toolSessionCreate(id interface{}, rawArgs json.RawMessage, clie
 		return
 	}
 
-	sess, err := s.sessionMgr.CreateSession(input.Host, sshCfg)
+	sess, err := s.sessionMgr.CreateSession(input.Host, sshCfg, client)
 	if err != nil {
 		sendToolError(send, id, "SSH connection failed: "+err.Error())
 		return
@@ -520,13 +520,14 @@ func (s *Server) toolSessionExec(id interface{}, rawArgs json.RawMessage, client
 		return
 	}
 
-	sess, ok := s.sessionMgr.GetSession(input.SessionID)
+	// Ownership check: a session may only be driven by its creator.
+	sess, ok := s.sessionMgr.GetSessionOwned(input.SessionID, client)
 	if !ok {
 		sendToolError(send, id, "session not found")
 		return
 	}
 
-	if sess.State != api.StateConnected {
+	if sess.State() != api.StateConnected {
 		sendToolError(send, id, "session is not connected")
 		return
 	}
@@ -560,7 +561,8 @@ func (s *Server) toolSessionClose(id interface{}, rawArgs json.RawMessage, clien
 		return
 	}
 
-	sess, ok := s.sessionMgr.GetSession(input.SessionID)
+	// Ownership check: a session may only be closed by its creator.
+	sess, ok := s.sessionMgr.GetSessionOwned(input.SessionID, client)
 	if !ok {
 		sendToolError(send, id, "session not found")
 		return

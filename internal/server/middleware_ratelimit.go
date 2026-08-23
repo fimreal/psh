@@ -168,8 +168,10 @@ func WSRateLimitMiddleware(limit int) gin.HandlerFunc {
 			return
 		}
 
-		// Store IP in context so websocket handler can release it
-		c.Set("ws-client-ip", ip)
+		// Release no matter how the handler exits (auth failure, failed
+		// upgrade, normal close): a slot taken and never returned would make
+		// the IP permanently unable to reconnect.
+		defer wsConnTracker.Release(ip)
 
 		c.Next()
 	}

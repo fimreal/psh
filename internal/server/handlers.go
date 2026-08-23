@@ -161,10 +161,10 @@ func (h *Handler) LoginHandler(c *gin.Context) {
 			// Generate new captcha challenge
 			key, question := h.loginLimiter.GenerateCaptcha(clientIP)
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"error":          "Captcha required",
-				"captcha_key":    key,
+				"error":            "Captcha required",
+				"captcha_key":      key,
 				"captcha_question": question,
-				"captcha_needed": true,
+				"captcha_needed":   true,
 			})
 			return
 		}
@@ -217,8 +217,19 @@ func (h *Handler) LoginHandler(c *gin.Context) {
 		return
 	}
 
-	// Set HttpOnly cookie
-	c.SetCookie("psh_token", token, h.jwtExpire, "/", "", true, true)
+	// Set HttpOnly auth cookie. Secure is set unless dev mode (plain HTTP);
+	// SameSite=Lax keeps the cookie out of cross-site WebSocket handshakes
+	// (defense against CSWSH, not reliant on browser defaults).
+	secureCookie := !h.devMode
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "psh_token",
+		Value:    token,
+		MaxAge:   h.jwtExpire,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   secureCookie,
+		SameSite: http.SameSiteLaxMode,
+	})
 
 	c.JSON(http.StatusOK, gin.H{
 		"expires_in": h.jwtExpire,
@@ -239,7 +250,15 @@ func (h *Handler) LogoutHandler(c *gin.Context) {
 	}
 
 	// Clear cookie
-	c.SetCookie("psh_token", "", -1, "/", "", true, true)
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     "psh_token",
+		Value:    "",
+		MaxAge:   -1,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   !h.devMode,
+		SameSite: http.SameSiteLaxMode,
+	})
 
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
 }
