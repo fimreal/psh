@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   POST body size/read-timeout limits to shed slow clients; authentication
   failures are logged and audited; fixed shutdown data race and made graceful-
   shutdown timeout no longer produce a failure exit code
+- Per-connection request cap is now a hard atomic reservation covering queued
+  AND executing jobs, so one connection can no longer hog the global dispatch
+  queue; the dispatch queue is sized from `PSH_MCP_MAX_CONNECTIONS`
+- `X-Forwarded-Proto`/`X-Forwarded-Host` are no longer trusted by default;
+  opt in with `PSH_MCP_TRUST_PROXY_HEADERS=true` behind a trusted proxy
+  (proto value validated)
 
 ## [0.1.0] - 2025-04-10
 

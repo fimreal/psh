@@ -65,6 +65,7 @@ func main() {
 	rateWindow := parseDuration("PSH_MCP_RATE_WINDOW", mcp.DefaultRateWindow)
 	maxSessions := parseInt("PSH_MCP_MAX_SESSIONS", mcp.DefaultMaxSessions)
 	maxConnections := parseInt("PSH_MCP_MAX_CONNECTIONS", mcp.DefaultMaxConnections)
+	trustProxyHeaders := parseBool("PSH_MCP_TRUST_PROXY_HEADERS", false)
 
 	cfg := mcp.Config{
 		SessionTimeout: sessionTimeout,
@@ -100,7 +101,7 @@ func main() {
 		return
 	}
 
-	if err := runSSE(srv, *listen, *tlsCert, *tlsKey, *autoCerts, maxConnections, rateLimit, rateWindow, maxSessions); err != nil {
+	if err := runSSE(srv, *listen, *tlsCert, *tlsKey, *autoCerts, maxConnections, trustProxyHeaders, rateLimit, rateWindow, maxSessions); err != nil {
 		fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
 		os.Exit(1)
 	}
@@ -108,13 +109,15 @@ func main() {
 
 // runSSE runs the MCP server as a resident remote service using the HTTP/SSE
 // transport (MCP spec 2024-11-05 "HTTP with SSE").
-func runSSE(srv *mcp.Server, listen, tlsCertPath, tlsKeyPath string, autoCerts bool, maxConnections, rateLimit int, rateWindow time.Duration, maxSessions int) error {
+func runSSE(srv *mcp.Server, listen, tlsCertPath, tlsKeyPath string, autoCerts bool, maxConnections int, trustProxyHeaders bool, rateLimit int, rateWindow time.Duration, maxSessions int) error {
 	apiKeys := loadMCPAPIKeys(os.Getenv("PSH_MCP_API_KEYS"))
-	sseSrv, err := mcp.NewSSEServer(srv, apiKeys)
+	sseSrv, err := mcp.NewSSEServer(srv, apiKeys, mcp.SSEOptions{
+		MaxConnections:    maxConnections,
+		TrustProxyHeaders: trustProxyHeaders,
+	})
 	if err != nil {
 		return err
 	}
-	sseSrv.SetMaxConnections(maxConnections)
 
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {
@@ -138,6 +141,7 @@ func runSSE(srv *mcp.Server, listen, tlsCertPath, tlsKeyPath string, autoCerts b
 		"tls", tlsConfig != nil,
 		"api_keys", len(apiKeys),
 		"max_connections", sseSrv.MaxConnections(),
+		"trust_proxy_headers", trustProxyHeaders,
 		"rate_limit", rateLimit,
 		"rate_window", rateWindow.String(),
 		"max_sessions", maxSessions,
@@ -278,4 +282,19 @@ func parseInt(envKey string, defaultVal int) int {
 		return defaultVal
 	}
 	return n
+}
+
+// parseBool reads a boolean env var, accepting common truthy spellings.
+func parseBool(envKey string, defaultVal bool) bool {
+	val := strings.TrimSpace(os.Getenv(envKey))
+	if val == "" {
+		return defaultVal
+	}
+	switch strings.ToLower(val) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	}
+	return defaultVal
 }

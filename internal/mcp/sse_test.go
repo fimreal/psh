@@ -36,7 +36,12 @@ func newTestServer(t *testing.T, mod func(*Config)) *Server {
 
 func newTestSSE(t *testing.T, keys map[string]string, mod func(*Config)) (*SSEServer, *httptest.Server) {
 	t.Helper()
-	sse, err := NewSSEServer(newTestServer(t, mod), keys)
+	return newTestSSEOpts(t, keys, mod, SSEOptions{})
+}
+
+func newTestSSEOpts(t *testing.T, keys map[string]string, mod func(*Config), opts SSEOptions) (*SSEServer, *httptest.Server) {
+	t.Helper()
+	sse, err := NewSSEServer(newTestServer(t, mod), keys, opts)
 	if err != nil {
 		t.Fatalf("NewSSEServer: %v", err)
 	}
@@ -216,10 +221,10 @@ func readRPCResponse(t *testing.T, reader *sseReader) rpcResponse {
 func TestNewSSEServer_RequiresKeys(t *testing.T) {
 	srv := newTestServer(t, nil)
 
-	if _, err := NewSSEServer(srv, nil); err == nil {
+	if _, err := NewSSEServer(srv, nil, SSEOptions{}); err == nil {
 		t.Fatal("expected error when no API keys are configured")
 	}
-	if _, err := NewSSEServer(srv, map[string]string{"  ": "empty"}); err == nil {
+	if _, err := NewSSEServer(srv, map[string]string{"  ": "empty"}, SSEOptions{}); err == nil {
 		t.Fatal("expected error when all API keys are blank")
 	}
 }
@@ -509,20 +514,19 @@ func TestNewSSEServer_RejectsDuplicateIdentifiers(t *testing.T) {
 	_, err := NewSSEServer(srv, map[string]string{
 		"token-a": "same-id",
 		"token-b": "same-id",
-	})
+	}, SSEOptions{})
 	if err == nil {
 		t.Fatal("expected error for duplicate identifiers")
 	}
 
-	_, err = NewSSEServer(srv, map[string]string{"token-a": "  "})
+	_, err = NewSSEServer(srv, map[string]string{"token-a": "  "}, SSEOptions{})
 	if err == nil {
 		t.Fatal("expected error for blank identifier")
 	}
 }
 
 func TestSSE_ConnectionLimit(t *testing.T) {
-	sse, ts := newTestSSE(t, map[string]string{"secret-token": "tester"}, nil)
-	sse.SetMaxConnections(1)
+	sse, ts := newTestSSEOpts(t, map[string]string{"secret-token": "tester"}, nil, SSEOptions{MaxConnections: 1})
 
 	// First stream takes the only slot.
 	resp, _ := openSSEStream(t, ts.URL, "secret-token")

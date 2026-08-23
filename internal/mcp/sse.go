@@ -21,7 +21,7 @@ import (
 	"github.com/fimreal/psh/internal/audit"
 )
 
-const (
+var (
 	// sseKeepaliveInterval is how often a comment line is written to idle SSE
 	// streams so proxies do not close them and dead peers are detected.
 	sseKeepaliveInterval = 15 * time.Second
@@ -33,7 +33,9 @@ const (
 	// sseBodyReadTimeout bounds reading a POST /messages request body so a
 	// slow-drip client cannot pin a goroutine indefinitely.
 	sseBodyReadTimeout = 30 * time.Second
+)
 
+const (
 	// maxMessageSize caps the size of a single inbound JSON-RPC message.
 	maxMessageSize = 1 << 20 // 1 MiB
 
@@ -50,6 +52,18 @@ const (
 	// one connection so a single client cannot spawn unbounded goroutines.
 	maxInflightPerConn = 8
 )
+
+// SSEOptions tunes the SSE transport. Zero values select defaults.
+type SSEOptions struct {
+	// MaxConnections caps concurrent SSE connections
+	// (default DefaultMaxConnections).
+	MaxConnections int
+
+	// TrustProxyHeaders makes the endpoint URL honor X-Forwarded-Proto and
+	// X-Forwarded-Host. Only enable this when psh-mcp runs behind a proxy
+	// that overwrites these headers; otherwise clients could spoof them.
+	TrustProxyHeaders bool
+}
 
 // authKey is one accepted bearer token with its audit identifier.
 type authKey struct {
@@ -75,7 +89,8 @@ type SSEServer struct {
 	server *Server
 	keys   []authKey
 
-	maxConnections int
+	maxConnections    int
+	trustProxyHeaders bool
 
 	// dispatch serializes the start of request execution so POST /messages
 	// can return 202 immediately while tools (SSH exec up to minutes) run
@@ -113,7 +128,7 @@ type sseConn struct {
 // to human-readable identifiers used for rate limiting and audit logging.
 // Identifiers must be non-empty and unique: they are the rate-limit keys and
 // connection ownership is enforced by token identity, not identifier.
-func NewSSEServer(server *Server, keys map[string]string) (*SSEServer, error) {
+func NewSSEServer(server *Server, keys map[string]string, opts SSEOptions) (*SSEServer, error) {
 	if len(keys) == 0 {
 		return nil, fmt.Errorf("remote (sse) mode requires at least one API key (set PSH_MCP_API_KEYS)")
 	}
@@ -139,13 +154,22 @@ func NewSSEServer(server *Server, keys map[string]string) (*SSEServer, error) {
 		return nil, fmt.Errorf("remote (sse) mode requires at least one non-empty API key")
 	}
 
+	maxConns := opts.MaxConnections
+	if maxConns <= 0 {
+		maxConns = DefaultMaxConnections
+	}
+
 	t := &SSEServer{
-		server:         server,
-		keys:           authKeys,
-		maxConnections: DefaultMaxConnections,
-		dispatch:       make(chan dispatchJob, maxInflightPerConn*DefaultMaxConnections),
-		closed:         make(chan struct{}),
-		conns:          make(map[string]*sseConn),
+		server:            server,
+		keys:              authKeys,
+		maxConnections:    maxConns,
+		trustProxyHeaders: opts.TrustProxyHeaders,
+		// Sized so every connection can always hold up to maxInflightPerConn
+		// queued-or-executing jobs; overflow beyond that sheds load via the
+		// senders' default branch instead of growing memory.
+		dispatch: make(chan dispatchJob, maxInflightPerConn*maxConns),
+		closed:   make(chan struct{}),
+		conns:    make(map[string]*sseConn),
 	}
 	t.httpSrv = &http.Server{
 		Handler:           t.Handler(),
@@ -183,17 +207,19 @@ func (t *SSEServer) Serve(ln net.Listener) error {
 	return err
 }
 
-// SetMaxConnections overrides the concurrent SSE connection cap
-// (DefaultMaxConnections). Must be called before Serve.
-func (t *SSEServer) SetMaxConnections(n int) {
-	if n > 0 {
-		t.maxConnections = n
-	}
+// SetTrustedProxyHeaders controls whether X-Forwarded-Proto/Host are honored
+// when building the endpoint URL. Only enable behind a trusted proxy that
+// overwrites these headers. Must be called before Serve.
+func (t *SSEServer) SetTrustedProxyHeaders(v bool) {
+	t.trustProxyHeaders = v
 }
 
 // Shutdown gracefully stops the HTTP server, the dispatcher and tears down
-// all SSE connections. Requests still executing are allowed to finish; their
-// responses are discarded once the owning connection is gone.
+// all SSE connections. In-flight HTTP handlers are allowed to finish, but
+// tool executions already handed to the dispatcher are NOT awaited: after
+// Shutdown returns (or main exits) they may be interrupted mid-run, and
+// clients holding a 202 may never receive a response — an accepted risk of
+// the 202-acknowledged async protocol.
 func (t *SSEServer) Shutdown(ctx context.Context) error {
 	t.shutdownOnce.Do(func() { close(t.closed) })
 
@@ -210,15 +236,15 @@ func (t *SSEServer) Shutdown(ctx context.Context) error {
 	return err
 }
 
-// runDispatcher starts execution of incoming JSON-RPC requests with a bounded
-// number of workers per connection. It exits when the server shuts down;
-// still-queued jobs are discarded (their connections are being torn down).
+// runDispatcher starts execution of incoming JSON-RPC requests. It exits when
+// the server shuts down; still-queued jobs are discarded (their connections
+// are being torn down). Each job's inflight slot was already reserved by the
+// POST handler; the slot is released here once execution finishes.
 func (t *SSEServer) runDispatcher() {
 	for {
 		select {
 		case job := <-t.dispatch:
 			go func() {
-				job.conn.inflight.Add(1)
 				defer job.conn.inflight.Add(-1)
 				t.server.handleRequest(&job.req, job.conn.clientID, job.send)
 			}()
@@ -301,10 +327,6 @@ func (t *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// reading cannot block this goroutine forever (nil-safe when the server
 	// does not support deadlines, e.g. httptest).
 	rc := http.NewResponseController(w)
-	writeWithDeadline := func(fn func() error) error {
-		_ = rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout))
-		return fn()
-	}
 
 	ticker := time.NewTicker(sseKeepaliveInterval)
 	defer ticker.Stop()
@@ -317,19 +339,13 @@ func (t *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		case <-conn.done:
 			return
 		case data := <-conn.outbound:
-			if err := writeWithDeadline(func() error {
-				_, err := fmt.Fprintf(w, "event: message\ndata: %s\n\n", data)
-				return err
-			}); err != nil {
+			if err := writeEventWithDeadline(rc, w, "event: message\ndata: "+string(data)+"\n\n"); err != nil {
 				log.Warnw("MCP SSE write failed, closing connection", "connection", id, "client", clientID, "error", err)
 				return
 			}
 			flusher.Flush()
 		case <-ticker.C:
-			if err := writeWithDeadline(func() error {
-				_, err := fmt.Fprint(w, ": keepalive\n\n")
-				return err
-			}); err != nil {
+			if err := writeEventWithDeadline(rc, w, ": keepalive\n\n"); err != nil {
 				log.Warnw("MCP SSE keepalive failed, closing connection", "connection", id, "client", clientID, "error", err)
 				return
 			}
@@ -371,33 +387,52 @@ func (t *SSEServer) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Bound per-connection concurrency before accepting more work.
-	if conn.inflight.Load() >= maxInflightPerConn {
-		writeJSONError(w, http.StatusTooManyRequests, "too many concurrent requests for this connection")
+	// Reserve one outstanding-job slot atomically before enqueueing. The
+	// counter covers queued AND executing jobs, so this is a hard per-
+	// connection cap (no check-then-enqueue race), and a single connection
+	// can never hog more than maxInflightPerConn entries of the global queue.
+	if conn.inflight.Add(1) > maxInflightPerConn {
+		conn.inflight.Add(-1)
+		writeJSONError(w, http.StatusTooManyRequests, "too many pending requests for this connection")
 		return
 	}
 
 	send := t.makeSend(conn)
+	sent := true
 	select {
 	case t.dispatch <- dispatchJob{conn: conn, req: req, send: send}:
 	case <-conn.done:
 		writeJSONError(w, http.StatusNotFound, "session not found")
-		return
+		sent = false
 	case <-t.closed:
 		writeJSONError(w, http.StatusServiceUnavailable, "server shutting down")
-		return
+		sent = false
 	default:
 		// Dispatcher queue full: shed load instead of buffering without bound.
 		writeJSONError(w, http.StatusServiceUnavailable, "server busy, retry later")
+		sent = false
+	}
+	if !sent {
+		conn.inflight.Add(-1)
 		return
 	}
 
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// writeEventWithDeadline writes one SSE frame with a fresh write deadline so
+// a stalled reader cannot pin the streaming goroutine beyond sseWriteTimeout.
+func writeEventWithDeadline(rc *http.ResponseController, w io.Writer, payload string) error {
+	_ = rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout))
+	_, err := fmt.Fprint(w, payload)
+	return err
+}
+
 // makeSend builds the response sink for a connection: responses are queued
 // for the SSE stream; a stalled consumer (queue full) drops the connection
-// rather than growing memory without bound.
+// rather than growing memory without bound. This branch is defense in depth:
+// with the per-connection inflight cap the buffer should never fill, but if
+// it ever does we fail closed.
 func (t *SSEServer) makeSend(conn *sseConn) sendFunc {
 	return func(resp jsonRPCResponse) {
 		data, err := json.Marshal(resp)
@@ -450,18 +485,25 @@ func readBodyWithTimeout(w http.ResponseWriter, r *http.Request) ([]byte, int, e
 }
 
 // messageEndpointURL builds the absolute message endpoint URL announced to
-// the client, respecting X-Forwarded-Proto/TLS for the scheme.
+// the client. X-Forwarded-Proto/Host are only honored when explicitly enabled
+// (SetTrustedProxyHeaders / SSEOptions.TrustProxyHeaders): blindly trusting
+// them lets direct clients spoof where their own subsequent POSTs go.
 func (t *SSEServer) messageEndpointURL(r *http.Request, sessionID string) string {
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	if fp := r.Header.Get("X-Forwarded-Proto"); fp != "" {
-		scheme = fp
-	}
 	host := r.Host
-	if fh := r.Header.Get("X-Forwarded-Host"); fh != "" {
-		host = fh
+	if t.trustProxyHeaders {
+		switch fp := r.Header.Get("X-Forwarded-Proto"); fp {
+		case "https":
+			scheme = "https"
+		case "http":
+			scheme = "http"
+		}
+		if fh := r.Header.Get("X-Forwarded-Host"); fh != "" {
+			host = fh
+		}
 	}
 	return fmt.Sprintf("%s://%s/messages?sessionId=%s", scheme, host, sessionID)
 }

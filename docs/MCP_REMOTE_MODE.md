@@ -92,7 +92,8 @@
 - **请求认证**：`PSH_MCP_API_KEYS` 配置 Bearer token（逗号分隔，或指向密钥文件的路径，一行一个、支持 `#` 注释，与 Web 端 `PSH_API_KEYS` 语义一致）。远程模式 **fail-closed**：未配置任何密钥时拒绝启动；连接与其创建者的 token 绑定，其他 token 无法驱动该连接。token 同时作为限流与审计身份。
 - **TLS**：`--tls-cert` / `--tls-key`（或 `PSH_TLS_CERT` / `PSH_TLS_KEY`）启用证书；`--auto-certs`（`PSH_AUTO_CERTS=true`）自动生成自签证书；均未配置时明文 HTTP 并打印告警。
 - **兼容既有机制**：`PSH_API_ALLOWED_HOSTS` 白名单、`PSH_AUDIT_LOG` / `PSH_AUDIT_LEVEL` 审计、`PSH_MCP_RATE_LIMIT` / `PSH_MCP_RATE_WINDOW`（远程模式下按 token 维度限流）、`PSH_MCP_MAX_SESSIONS` 并发会话上限均继续生效。
-- **资源保护**：`PSH_MCP_MAX_CONNECTIONS`（默认 100）限制并发 SSE 连接，超限返回 429；单连接待处理请求与响应缓冲均有上限，慢客户端会被主动断开；POST body 大小（1 MiB）与读取超时受限。
+- **资源保护**：`PSH_MCP_MAX_CONNECTIONS`（默认 100）限制并发 SSE 连接，超限返回 429；单连接待处理请求（含排队中）与响应缓冲均有上限，慢客户端会被主动断开；POST body 大小（1 MiB）与读取超时受限。
+- **代理头信任**：endpoint URL 默认不信任 `X-Forwarded-Proto` / `X-Forwarded-Host`；仅在受信反向代理后部署时设置 `PSH_MCP_TRUST_PROXY_HEADERS=true`。
 - SIGINT/SIGTERM 优雅退出；SSE 流每 15s 发送 keepalive 注释行，防止代理掐断长连接。
 
 ## 用法示例

@@ -25,6 +25,11 @@ type Server struct {
 	maxExecTimeout time.Duration
 	mu             sync.Mutex
 	writer         *bufio.Writer
+
+	// preExec, when non-nil, is invoked by handleRequest before executing a
+	// request. Test-only hook for deterministic async-dispatch regression
+	// tests; must be set before the server starts serving.
+	preExec func(req jsonRPCRequest)
 }
 
 // Config holds MCP server configuration.
@@ -264,6 +269,9 @@ func (s *Server) Close() {
 // handleRequest dispatches a single JSON-RPC request. client identifies the
 // caller (rate limiting + audit) and send delivers responses back to it.
 func (s *Server) handleRequest(req *jsonRPCRequest, client string, send sendFunc) {
+	if s.preExec != nil {
+		s.preExec(*req)
+	}
 	switch req.Method {
 	case "initialize":
 		s.handleInitialize(req, send)
