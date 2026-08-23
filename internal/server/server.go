@@ -113,12 +113,21 @@ func (s *Server) Run() error {
 	// Apply security headers
 	r.Use(SecurityMiddleware())
 
-	// Apply CORS middleware. No wildcard default: an empty configuration
-	// means no cross-origin access is allowed (same-origin UI still works).
-	r.Use(CORSMiddleware(s.cfg.AllowedOrigins))
+	// Apply CORS middleware. Backwards-compatible default: an empty
+	// configuration allows all origins, but this weakens the WebSocket origin
+	// check (any page can attempt authenticated handshakes) and disables CSRF
+	// protection for cookie-based auth, so warn loudly at startup.
+	origins := s.cfg.AllowedOrigins
+	if len(origins) == 0 {
+		origins = []string{"*"}
+		log.Warnw("PSH_ALLOWED_ORIGINS is not configured: allowing all origins. " +
+			"For production use, set it to the exact origin(s) serving the web UI " +
+			"(e.g. https://shell.example.com)")
+	}
+	r.Use(CORSMiddleware(origins))
 
-	// Setup WebSocket origin validation (same fail-closed policy)
-	SetupWebSocketOrigins(s.cfg.AllowedOrigins)
+	// Setup WebSocket origin validation (same policy as CORS)
+	SetupWebSocketOrigins(origins)
 
 	// Load HTML templates from embedded FS
 	tmpl, err := template.ParseFS(static.Files, "index.html")

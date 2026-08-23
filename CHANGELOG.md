@@ -26,9 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--api-exec-timeout` is now actually honored as the exec timeout cap
   (previously shadowed by an unrelated constant)
 - Auth cookie is now `SameSite=Lax` and `Secure` outside dev mode
-- Cross-origin policy is deny-by-default: with no `--allowed-origins`
-  configured, cross-origin requests and WebSocket handshakes are rejected
-  instead of being allowed from anywhere
+- Cross-origin policy: when no `--allowed-origins` is configured the
+  previous allow-all default is kept, but a warning is logged at startup;
+  explicitly configured origin lists are enforced strictly
 - Outbound SSH targets are re-checked at dial time against loopback and
   link-local ranges (including cloud metadata 169.254.169.254) plus the user
   blacklist, on the RESOLVED address — closing DNS-rebinding TOCTOU bypasses;

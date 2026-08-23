@@ -91,7 +91,7 @@ docker-compose up -d
 | `PSH_TLS_KEY` | | - | TLS 私钥路径 |
 | `PSH_AUTO_CERTS` | | `true` | 自动生成自签名证书 |
 | `PSH_SSH_BLACKLIST` | | `127.0.0.0/8` | SSH 黑名单（CIDR 格式，逗号分隔；回环与 link-local 段始终强制拦截，含 IPv6） |
-| `PSH_ALLOWED_ORIGINS` | | 空（拒绝跨源） | CORS 允许的域名（逗号分隔；未配置时默认拒绝跨源请求与 WebSocket 跨源握手） |
+| `PSH_ALLOWED_ORIGINS` | | `*` | CORS 允许的域名（逗号分隔，默认允许所有，启动时会告警；生产环境建议显式配置） |
 | `PSH_TRUSTED_PROXIES` | | 空（不信任） | 受信反向代理地址（CIDR）；仅这些代理的 `X-Forwarded-For` 会被采信，用于登录锁定与限速 |
 | `PSH_MAX_WS_CONNS` | | `10` | 每分钟每 IP 最大 WebSocket 连接数 |
 
