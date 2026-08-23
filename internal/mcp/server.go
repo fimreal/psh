@@ -17,13 +17,14 @@ import (
 
 // Server implements a JSON-RPC 2.0 based MCP server over stdio.
 type Server struct {
-	sessionMgr   *api.SessionManager
-	auditLogger  *audit.Logger
-	apiKeyID     string
-	allowedHosts map[string]bool
-	limiter      *RateLimiter
-	mu           sync.Mutex
-	writer       *bufio.Writer
+	sessionMgr     *api.SessionManager
+	auditLogger    *audit.Logger
+	apiKeyID       string
+	allowedHosts   map[string]bool
+	limiter        *RateLimiter
+	maxExecTimeout time.Duration
+	mu             sync.Mutex
+	writer         *bufio.Writer
 }
 
 // Config holds MCP server configuration.
@@ -47,6 +48,10 @@ const (
 	DefaultRateLimit   = 10
 	DefaultRateWindow  = time.Minute
 	DefaultMaxSessions = 5
+
+	// defaultMaxExecTimeout caps per-command execution time when no explicit
+	// Config.ExecTimeout is provided.
+	defaultMaxExecTimeout = 300 * time.Second
 )
 
 // NewServer creates a new MCP server.
@@ -81,13 +86,20 @@ func NewServer(cfg Config) (*Server, error) {
 
 	limiter := NewRateLimiter(rateLimit, rateWindow, maxSessions)
 
+	// Apply exec timeout default.
+	maxExecTimeout := cfg.ExecTimeout
+	if maxExecTimeout <= 0 {
+		maxExecTimeout = defaultMaxExecTimeout
+	}
+
 	return &Server{
-		sessionMgr:   sessionMgr,
-		auditLogger:  auditLogger,
-		apiKeyID:     cfg.APIKeyID,
-		allowedHosts: hostSet,
-		limiter:      limiter,
-		writer:       bufio.NewWriter(os.Stdout),
+		sessionMgr:     sessionMgr,
+		auditLogger:    auditLogger,
+		apiKeyID:       cfg.APIKeyID,
+		allowedHosts:   hostSet,
+		limiter:        limiter,
+		maxExecTimeout: maxExecTimeout,
+		writer:         bufio.NewWriter(os.Stdout),
 	}, nil
 }
 
@@ -398,6 +410,7 @@ func (s *Server) toolSSHExec(id interface{}, rawArgs json.RawMessage, client str
 
 	// Validate host against whitelist
 	if !s.isHostAllowed(input.Host) {
+		log.Warnw("MCP ssh_exec rejected: host not in whitelist", "host", input.Host, "client", client)
 		sendToolError(send, id, "host not in allowed hosts whitelist")
 		return
 	}
@@ -426,7 +439,7 @@ func (s *Server) toolSSHExec(id interface{}, rawArgs json.RawMessage, client str
 	_ = s.auditLogger.LogAPIEvent(audit.EventAPISessionCreate, sess.ID, input.Host, client, "")
 
 	// Execute
-	timeout := resolveTimeout(input.Timeout)
+	timeout := s.resolveTimeout(input.Timeout)
 	stdout, stderr, exitCode, err := sess.Exec(input.Command, timeout)
 	if err != nil {
 		sendToolError(send, id, "exec failed: "+err.Error())
@@ -457,6 +470,7 @@ func (s *Server) toolSessionCreate(id interface{}, rawArgs json.RawMessage, clie
 
 	// Validate host against whitelist
 	if !s.isHostAllowed(input.Host) {
+		log.Warnw("MCP ssh_session_create rejected: host not in whitelist", "host", input.Host, "client", client)
 		sendToolError(send, id, "host not in allowed hosts whitelist")
 		return
 	}
@@ -509,7 +523,7 @@ func (s *Server) toolSessionExec(id interface{}, rawArgs json.RawMessage, client
 		return
 	}
 
-	timeout := resolveTimeout(input.Timeout)
+	timeout := s.resolveTimeout(input.Timeout)
 	stdout, stderr, exitCode, err := sess.Exec(input.Command, timeout)
 	if err != nil {
 		sendToolError(send, id, "exec failed: "+err.Error())
@@ -557,14 +571,20 @@ func (s *Server) toolSessionClose(id interface{}, rawArgs json.RawMessage, clien
 
 // --- Helpers ---
 
-func resolveTimeout(seconds int) time.Duration {
+// resolveTimeout clamps a client-requested timeout (seconds) to sane bounds:
+// default 30s, capped by the configured maximum exec timeout.
+func (s *Server) resolveTimeout(seconds int) time.Duration {
 	if seconds <= 0 {
 		return 30 * time.Second
 	}
-	if seconds > 300 {
-		return 300 * time.Second
+	max := s.maxExecTimeout
+	if max <= 0 {
+		max = defaultMaxExecTimeout
 	}
-	return time.Duration(seconds) * time.Second
+	if d := time.Duration(seconds) * time.Second; d < max {
+		return d
+	}
+	return max
 }
 
 func sendResult(send sendFunc, id interface{}, result interface{}) {

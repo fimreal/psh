@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SHA256 checksums for all release binaries
 - Health check in Docker image
 
+### Fixed
+- psh-mcp SSE mode hardening (code review follow-ups): `POST /messages` now
+  acknowledges immediately (202) and executes tools asynchronously with a
+  bounded dispatch queue; added SSE connection cap (`PSH_MCP_MAX_CONNECTIONS`,
+  429 on overflow), per-connection in-flight limits, SSE write deadlines and
+  POST body size/read-timeout limits to shed slow clients; authentication
+  failures are logged and audited; fixed shutdown data race and made graceful-
+  shutdown timeout no longer produce a failure exit code
+
 ## [0.1.0] - 2025-04-10
 
 ### Added
