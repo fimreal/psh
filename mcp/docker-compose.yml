@@ -17,6 +17,9 @@ services:
       PSH_HOST: 0.0.0.0
       PSH_PORT: 8443
       PSH_PASSWORD: ${PSH_PASSWORD:?PSH_PASSWORD required in .env}
+      # 关键：scratch 镜像没有 /etc/passwd，Docker 不会自动设置 HOME，
+      # 不设的话 os.UserHomeDir() 解析失败，~/.ssh 密钥与 config 全部加载不到
+      HOME: /root
       PSH_AUTO_CERTS: "true"
       # 固定 JWT 签名密钥：容器重启后会话不失效（留空则每次重启随机生成）
       PSH_JWT_SECRET: ${PSH_JWT_SECRET:-}

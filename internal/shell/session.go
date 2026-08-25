@@ -544,7 +544,19 @@ func (s *Session) promptPassword() {
 func (s *Session) connectWithPassword(password string) {
 	config := &ssh.ClientConfig{
 		User: s.pendingSSHUser,
-		Auth: []ssh.AuthMethod{ssh.Password(password)},
+		Auth: []ssh.AuthMethod{
+			ssh.Password(password),
+			// Many sshd configs disable the "password" method but keep
+			// keyboard-interactive (PAM). Answer every prompt with the
+			// same password so both auth styles work.
+			ssh.KeyboardInteractive(func(name, instruction string, questions []string, echos []bool) ([]string, error) {
+				answers := make([]string, len(questions))
+				for i := range questions {
+					answers[i] = password
+				}
+				return answers, nil
+			}),
+		},
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 			return s.verifyHostKey(hostname, key)
 		},
