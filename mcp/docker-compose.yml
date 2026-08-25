@@ -1,0 +1,33 @@
+# psh 生产部署（docker compose）
+# 用法:
+#   cp .env.example .env && vim .env   # 设置强密码
+#   docker compose up -d
+#   docker compose logs -f psh         # 观察启动与审计日志
+
+services:
+  psh:
+    image: epurs/psh:latest        # 或自行构建: docker build -t psh:local .
+    container_name: psh
+    restart: unless-stopped
+    ports:
+      # 默认仅绑定宿主机回环：MCP server 与 psh 同机时最安全。
+      # 如需从局域网其他机器访问 Web 界面，改为 "8443:8443" 并确保防火墙收敛。
+      - "127.0.0.1:8443:8443"
+    environment:
+      PSH_HOST: 0.0.0.0
+      PSH_PORT: 8443
+      PSH_PASSWORD: ${PSH_PASSWORD:?PSH_PASSWORD required in .env}
+      PSH_AUTO_CERTS: "true"
+      # 固定 JWT 签名密钥：容器重启后会话不失效（留空则每次重启随机生成）
+      PSH_JWT_SECRET: ${PSH_JWT_SECRET:-}
+      # TOFU 模式（默认）：首次连接自动记录 host key 到 known_hosts。
+      # 高安全场景改 "true"，但需提前手工写入 known_hosts。
+      PSH_STRICT_HOST_KEY: ${PSH_STRICT_HOST_KEY:-false}
+      PSH_AUDIT_LEVEL: command
+    volumes:
+      # 复用宿主机 root 的 ssh 配置/私钥/known_hosts。
+      # psh 需要写 known_hosts（TOFU），故不可加 :ro；如需只读，
+      # 先在宿主机上预填 known_hosts 并设置 PSH_STRICT_HOST_KEY=true。
+      - /root/.ssh:/root/.ssh
+      # 审计日志持久化
+      - ./data/audit:/var/log/psh

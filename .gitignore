@@ -43,3 +43,4 @@ temp/
 
 # Audit logs
 audit.jsonl
+__pycache__/
