@@ -591,3 +591,95 @@ if (document.readyState === 'loading') {
 } else {
     new PshApp();
 }
+
+// ============================================================================
+// MCP / Audit activity panel — shows recent commands executed via the
+// embedded MCP server alongside webshell activity. Polls the authenticated
+// /api/audit/recent endpoint; purely client-side, no extra dependencies.
+// ============================================================================
+(function () {
+    const PANEL_ID = 'psh-audit-panel';
+    if (document.getElementById(PANEL_ID)) return;
+
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
+        (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+
+    const box = document.createElement('div');
+    box.id = PANEL_ID;
+    box.style.cssText =
+        'position:fixed;right:14px;bottom:52px;width:480px;max-width:92vw;max-height:46vh;' +
+        'background:#111827;color:#d1d5db;font:12px/1.5 ui-monospace,monospace;' +
+        'border:1px solid #374151;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.45);' +
+        'display:none;flex-direction:column;overflow:hidden;z-index:9998';
+    box.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;
+                    padding:6px 10px;background:#1f2937;flex:0 0 auto">
+            <b style="color:#f9fafb">MCP / 审计活动</b>
+            <span>
+                <button data-act="refresh" style="margin-right:6px;cursor:pointer">刷新</button>
+                <button data-act="close" style="cursor:pointer">×</button>
+            </span>
+        </div>
+        <div data-role="list" style="overflow:auto;padding:6px 10px"></div>`;
+
+    const toggleChip = document.createElement('div');
+    toggleChip.textContent = '📋 活动';
+    toggleChip.title = 'MCP / 审计活动';
+    toggleChip.style.cssText =
+        'position:fixed;right:14px;bottom:14px;z-index:9998;cursor:pointer;' +
+        'background:#1f2937;color:#d1d5db;border:1px solid #374151;border-radius:999px;' +
+        'padding:4px 12px;font:12px ui-monospace,monospace;user-select:none';
+    toggleChip.addEventListener('click', () => setOpen(!isOpen()));
+
+    const list = box.querySelector('[data-role=list]');
+    const isOpen = () => box.style.display === 'flex';
+
+    function render(events) {
+        if (!events.length) {
+            list.innerHTML = '<i style="color:#6b7280">(暂无事件)</i>';
+            return;
+        }
+        list.innerHTML = events.map((e) => {
+            const t = (e.timestamp || '').replace('T', ' ').slice(0, 19);
+            const who = esc(e.user || '');
+            const cmd = esc(e.command || e.error || e.type || '');
+            const host = esc(e.host || '');
+            return `<div style="padding:2px 0;border-bottom:1px dashed #1f2937">
+                <span style="color:#6b7280">${esc(t)}</span>
+                <span style="color:#93c5fd">[${esc(e.type)}]</span>
+                ${who ? `<span style="color:#fbbf24">${who}</span>` : ''}
+                ${host ? `<span style="color:#a7f3d0">@${host}</span>` : ''}
+                <span>${cmd}</span></div>`;
+        }).join('');
+    }
+
+    async function refresh() {
+        try {
+            const r = await fetch('/api/audit/recent?limit=60', {credentials: 'same-origin'});
+            if (r.status === 401) {
+                list.innerHTML = '<i style="color:#6b7280">未登录：请先登录后再查看</i>';
+                return;
+            }
+            const data = await r.json();
+            render(data.events || []);
+        } catch (e) {
+            list.innerHTML = `<i style="color:#ef4444">加载失败: ${esc(e.message)}</i>`;
+        }
+    }
+
+    function setOpen(v) {
+        box.style.display = v ? 'flex' : 'none';
+        if (v) {
+            refresh();
+            timer = setInterval(refresh, 5000);
+        } else if (timer) {
+            clearInterval(timer);
+            timer = null;
+        }
+    }
+
+    box.querySelector('[data-act=close]').addEventListener('click', () => setOpen(false));
+    box.querySelector('[data-act=refresh]').addEventListener('click', refresh);
+    document.body.appendChild(box);
+    document.body.appendChild(toggleChip);
+})();

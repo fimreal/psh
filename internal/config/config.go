@@ -53,6 +53,13 @@ type Config struct {
 	APISessionTimeout time.Duration // Idle timeout for API sessions (default: 10m)
 	APISessionMaxLife time.Duration // Max session lifetime (default: 1h)
 	APIExecTimeout    time.Duration // Max command execution timeout (default: 300s)
+
+	// Embedded MCP settings. The MCP server shares the web process and the
+	// web login passwords: clients authenticate to /mcp/* with the same
+	// credentials as the webshell (Bearer <password> or Basic user:password).
+	MCPEnabled      bool          // Serve MCP over SSE at /mcp (default: false)
+	MCPAllowedHosts []string      // Comma-separated allowed SSH hosts for MCP tools
+	MCPExecTimeout  time.Duration // Max command execution timeout (default: 300s)
 }
 
 // RunFunc is the function to run after config is loaded
@@ -118,6 +125,17 @@ func Load(run RunFunc) error {
 			}
 			if viper.IsSet("API_EXEC_TIMEOUT") {
 				cfg.APIExecTimeout = viper.GetDuration("API_EXEC_TIMEOUT")
+			}
+
+			// Embedded MCP settings
+			if viper.IsSet("MCP_ENABLED") {
+				cfg.MCPEnabled = viper.GetBool("MCP_ENABLED")
+			}
+			if viper.IsSet("MCP_ALLOWED_HOSTS") {
+				cfg.MCPAllowedHosts = getStringSliceEnv("MCP_ALLOWED_HOSTS")
+			}
+			if viper.IsSet("MCP_EXEC_TIMEOUT") {
+				cfg.MCPExecTimeout = viper.GetDuration("MCP_EXEC_TIMEOUT")
 			}
 
 			// Load passwords from file if specified

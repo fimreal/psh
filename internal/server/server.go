@@ -18,6 +18,7 @@ import (
 	"github.com/fimreal/psh/internal/audit"
 	"github.com/fimreal/psh/internal/auth"
 	"github.com/fimreal/psh/internal/config"
+	"github.com/fimreal/psh/internal/mcp"
 	tlspkg "github.com/fimreal/psh/pkg/tls"
 	"github.com/fimreal/psh/static"
 	"github.com/gin-gonic/gin"
@@ -34,6 +35,10 @@ type Server struct {
 	// API (optional)
 	apiHandler    *api.Handler
 	apiSessionMgr *api.SessionManager
+
+	// Embedded MCP (optional, shares web auth + audit logger)
+	mcpSrv *mcp.Server
+	mcpSSE *mcp.SSEServer
 }
 
 func New(cfg *config.Config) (*Server, error) {
@@ -79,6 +84,16 @@ func New(cfg *config.Config) (*Server, error) {
 		srv.apiHandler = apiHandler
 		srv.apiSessionMgr = apiSessionMgr
 		log.Infow("REST API enabled", "allowed_hosts", cfg.APIAllowedHosts, "api_keys", len(apiKeys))
+	}
+
+	// Initialize embedded MCP (shares web auth credentials + audit logger)
+	if cfg.MCPEnabled {
+		mcpSrv, mcpSSE, err := initMCP(cfg, auditLogger)
+		if err != nil {
+			return nil, err
+		}
+		srv.mcpSrv = mcpSrv
+		srv.mcpSSE = mcpSSE
 	}
 
 	return srv, nil
@@ -160,6 +175,21 @@ func (s *Server) Run() error {
 		log.Info("API v1 routes registered at /api/v1/sessions")
 	}
 
+	// Embedded MCP over SSE: /mcp/sse + /mcp/messages (+ /mcp/healthz).
+	// Authenticated with the webshell credentials (Bearer password or Basic
+	// user:password) via its own middleware — NOT the JWT-based
+	// AuthMiddleware, because MCP clients hold the shared password, not a
+	// login session.
+	if s.mcpSSE != nil {
+		mcpGroup := r.Group("/mcp")
+		mcpGroup.Use(RateLimitMiddleware(s.cfg.MaxRequestPerMin), s.mcpCredentialMiddleware())
+		mcpGroup.Any("/*path", gin.WrapH(http.StripPrefix("/mcp", s.mcpSSE.Handler())))
+		log.Info("MCP SSE transport mounted at /mcp/sse (auth: webshell password)")
+	}
+
+	// Recent audit events (webshell + MCP activity), for the web UI panel.
+	protected.GET("/api/audit/recent", s.handleAuditRecent)
+
 	// Create HTTP server
 	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 	srv := &http.Server{
@@ -240,6 +270,19 @@ func (s *Server) Run() error {
 	// Close API session manager (closes all SSH sessions)
 	if s.apiSessionMgr != nil {
 		s.apiSessionMgr.Close()
+	}
+
+	// Shut down MCP: stop SSE dispatcher/conns, then release MCP resources
+	// (the shared audit logger is closed above by the web server owner).
+	if s.mcpSSE != nil {
+		shutdownCtx, mcpCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer mcpCancel()
+		if err := s.mcpSSE.Shutdown(shutdownCtx); err != nil {
+			log.Warnw("MCP SSE shutdown issue", "error", err)
+		}
+	}
+	if s.mcpSrv != nil {
+		s.mcpSrv.Close()
 	}
 
 	log.Info("Server stopped")

@@ -568,6 +568,9 @@ func loadSSHKeys(identityFile string) ([]ssh.Signer, error) {
 			return nil, err
 		}
 		paths = append(paths,
+			// Dedicated psh key first: when present it is the preferred
+			// identity for API/MCP-initiated connections.
+			filepath.Join(home, ".ssh", "id_ed25519_psh"),
 			filepath.Join(home, ".ssh", "id_rsa"),
 			filepath.Join(home, ".ssh", "id_ed25519"),
 			filepath.Join(home, ".ssh", "id_ecdsa"),

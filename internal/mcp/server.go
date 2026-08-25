@@ -19,6 +19,7 @@ import (
 type Server struct {
 	sessionMgr     *api.SessionManager
 	auditLogger    *audit.Logger
+	ownsAudit      bool
 	apiKeyID       string
 	allowedHosts   map[string]bool
 	limiter        *RateLimiter
@@ -46,6 +47,11 @@ type Config struct {
 	RateLimit   int           // max tool calls per client per RateWindow (default: 10)
 	RateWindow  time.Duration // sliding window for rate limiting (default: 1m)
 	MaxSessions int           // max concurrent SSH sessions (default: 5, 0 = unlimited)
+
+	// SharedAuditLogger, when set, reuses the main web server's audit logger
+	// so webshell and MCP activity land in the same recent-events ring and
+	// file. When nil, a standalone logger is created from AuditLogPath.
+	SharedAuditLogger *audit.Logger
 }
 
 // Default rate limiting values.
@@ -61,9 +67,15 @@ const (
 
 // NewServer creates a new MCP server.
 func NewServer(cfg Config) (*Server, error) {
-	auditLogger, err := audit.NewLogger(cfg.AuditLogPath, audit.Level(cfg.AuditLevel))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create audit logger: %w", err)
+	auditLogger := cfg.SharedAuditLogger
+	ownsAudit := false
+	if auditLogger == nil {
+		var err error
+		auditLogger, err = audit.NewLogger(cfg.AuditLogPath, audit.Level(cfg.AuditLevel))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create audit logger: %w", err)
+		}
+		ownsAudit = true
 	}
 
 	sessionMgr := api.NewSessionManager(cfg.SessionTimeout, cfg.SessionMaxLife)
@@ -100,6 +112,7 @@ func NewServer(cfg Config) (*Server, error) {
 	return &Server{
 		sessionMgr:     sessionMgr,
 		auditLogger:    auditLogger,
+		ownsAudit:      ownsAudit,
 		apiKeyID:       cfg.APIKeyID,
 		allowedHosts:   hostSet,
 		limiter:        limiter,
@@ -260,7 +273,10 @@ func (s *Server) stdioSend(resp jsonRPCResponse) {
 // Close cleans up server resources.
 func (s *Server) Close() {
 	s.sessionMgr.Close()
-	s.auditLogger.Close()
+	if s.ownsAudit {
+		// A shared logger is owned (and closed) by the main web server.
+		s.auditLogger.Close()
+	}
 	if s.limiter != nil {
 		s.limiter.Close()
 	}

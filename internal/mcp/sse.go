@@ -60,9 +60,15 @@ type SSEOptions struct {
 	MaxConnections int
 
 	// TrustProxyHeaders makes the endpoint URL honor X-Forwarded-Proto and
-	// X-Forwarded-Host. Only enable this when psh-mcp runs behind a proxy
-	// that overwrites these headers; otherwise clients could spoof them.
+	// X-Forwarded-Host. Only enable this behind a trusted proxy that
+	// overwrites these headers; otherwise clients could spoof them.
 	TrustProxyHeaders bool
+
+	// BasePath is the mount prefix of the SSE endpoints when the handler is
+	// embedded into a larger HTTP mux (e.g. "/mcp" for the integrated web
+	// server). It is prefixed to the /messages URL announced to clients so
+	// their POSTs reach the mounted route. Empty means root-level mounting.
+	BasePath string
 }
 
 // authKey is one accepted bearer token with its audit identifier.
@@ -91,6 +97,7 @@ type SSEServer struct {
 
 	maxConnections    int
 	trustProxyHeaders bool
+	basePath          string
 
 	// dispatch serializes the start of request execution so POST /messages
 	// can return 202 immediately while tools (SSH exec up to minutes) run
@@ -164,6 +171,7 @@ func NewSSEServer(server *Server, keys map[string]string, opts SSEOptions) (*SSE
 		keys:              authKeys,
 		maxConnections:    maxConns,
 		trustProxyHeaders: opts.TrustProxyHeaders,
+		basePath:          strings.TrimSuffix(opts.BasePath, "/"),
 		// Sized so every connection can always hold up to maxInflightPerConn
 		// queued-or-executing jobs; overflow beyond that sheds load via the
 		// senders' default branch instead of growing memory.
@@ -505,7 +513,7 @@ func (t *SSEServer) messageEndpointURL(r *http.Request, sessionID string) string
 			host = fh
 		}
 	}
-	return fmt.Sprintf("%s://%s/messages?sessionId=%s", scheme, host, sessionID)
+	return fmt.Sprintf("%s://%s%s/messages?sessionId=%s", scheme, host, t.basePath, sessionID)
 }
 
 // --- Connection registry ---

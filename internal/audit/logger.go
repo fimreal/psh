@@ -56,7 +56,15 @@ type Logger struct {
 	batchSize   int
 	batchWindow time.Duration
 	isStdout    bool // stdout mode uses sync writes
+
+	// recent is an in-memory ring of the latest events (newest last) so the
+	// web UI can show recent activity (including MCP tool calls) without
+	// reading the audit file. Guarded by mu.
+	recent []Event
 }
+
+// RecentCap is the number of events kept in the in-memory recent ring.
+const RecentCap = 200
 
 func NewLogger(path string, level Level) (*Logger, error) {
 	// Normalize level
@@ -186,6 +194,18 @@ func (l *Logger) asyncWriter() {
 }
 
 func (l *Logger) writeEvent(event Event) error {
+	// Record into the in-memory recent ring regardless of file output so the
+	// web activity panel keeps working even when file audit is disabled.
+	if event.Timestamp == "" {
+		event.Timestamp = time.Now().UTC().Format(time.RFC3339)
+	}
+	l.mu.Lock()
+	l.recent = append(l.recent, event)
+	if len(l.recent) > RecentCap {
+		l.recent = l.recent[len(l.recent)-RecentCap:]
+	}
+	l.mu.Unlock()
+
 	// Skip if audit logging is disabled
 	if l.file == nil {
 		return nil
@@ -213,6 +233,21 @@ func (l *Logger) writeEvent(event Event) error {
 		log.Warnw("Audit log channel full, dropping event", "type", event.Type)
 		return nil
 	}
+}
+
+// Recent returns up to n latest events, newest first. The returned slice is a
+// copy and safe to marshal/modify.
+func (l *Logger) Recent(n int) []Event {
+	if n <= 0 {
+		n = RecentCap
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]Event, 0, len(l.recent))
+	for i := len(l.recent) - 1; i >= 0 && len(out) < n; i-- {
+		out = append(out, l.recent[i])
+	}
+	return out
 }
 
 func (l *Logger) LogConnection(sessionID, host, user string) error {
